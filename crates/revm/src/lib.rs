@@ -16,10 +16,15 @@ pub mod test_utils;
 
 pub mod db;
 mod evm;
+mod dag;
 mod frame;
 pub mod handler;
 mod inspector;
 mod journaled_state;
+mod task;
+pub mod occda;
+pub mod profiler;
+pub mod access_tracker;
 #[cfg(feature = "optimism")]
 pub mod optimism;
 
@@ -39,7 +44,7 @@ pub use evm::{Evm, CALL_STACK_LIMIT};
 pub use frame::{CallFrame, CreateFrame, Frame, FrameData, FrameOrResult, FrameResult};
 pub use handler::Handler;
 pub use inspector::{inspector_handle_register, inspectors, GetInspector, Inspector};
-pub use journaled_state::{JournalCheckpoint, JournalEntry, JournaledState};
+pub use journaled_state::{JournalCheckpoint, JournalEntry, JournaledState, ReadWriteSet};
 // export Optimism types, helpers, and constants
 #[cfg(feature = "optimism")]
 pub use optimism::{L1BlockInfo, BASE_FEE_RECIPIENT, L1_BLOCK_CONTRACT, L1_FEE_RECIPIENT};

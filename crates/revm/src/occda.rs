@@ -1,0 +1,246 @@
+use std::collections::BinaryHeap;
+use std::cmp::Reverse;
+use std::time::Instant;
+use wiring::result::ResultAndState;
+use crate::access_tracker::AccessTracker;
+use crate::journaled_state::AccessType;
+use crate::task::{SidOrderedTask, Task, TidOrderedTask};
+use crate::dag::TaskDag;
+use crate::evm::Evm;
+use crate::wiring::EthereumWiring;
+use crate::profiler;
+use database_interface::{DatabaseCommit, EmptyDB, WrapDatabaseRef};
+use database::CacheDB;
+use std::sync::{Arc, RwLock};
+use serde_json::{Map, Value};
+use rayon::prelude::*;
+
+type OccdaWiring<'a> = EthereumWiring<WrapDatabaseRef<&'a CacheDB<EmptyDB>>, ()>;
+
+pub struct Occda {
+    db: Arc<RwLock<CacheDB<EmptyDB>>>,
+    _dag: TaskDag,
+}
+
+impl Occda
+{
+    pub fn new(db: CacheDB<EmptyDB>, num_threads: usize) -> Self {
+        // Initialize global thread pool during struct creation
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build_global()
+            .unwrap();
+
+        Occda {
+            db: Arc::new(RwLock::new(db)),
+            _dag: TaskDag::new(),
+        }
+    }
+
+    // pub fn get_cached_state(&self) -> CacheState {
+    //     let state = self.state.read();
+    //     state.cache.clone()
+    // }
+
+    pub fn init(&mut self, tasks: Vec<Task>, graph: Option<&TaskDag>) -> BinaryHeap<Reverse<SidOrderedTask>> {
+        let mut heap = BinaryHeap::new();
+        
+        for mut task in tasks {
+            if let Some(g) = graph {
+                let sid_max = g.get_dependencies(&task)
+                    .into_iter()
+                    .map(|node| g.get_task_tid(node).unwrap_or(-1))
+                    .max()
+                    .unwrap_or(-1);
+                task.sid = sid_max;
+            } else {
+                task.sid = -1;
+            }
+            
+            heap.push(Reverse(SidOrderedTask(task)));
+        }
+        
+        heap
+    }
+
+    pub async fn main(&mut self, mut h_tx: BinaryHeap<Reverse<SidOrderedTask>>) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+        let mut h_ready = BinaryHeap::<Reverse<TidOrderedTask>>::new();
+        // let mut h_threads = BinaryHeap::<Reverse<GasOrderedTask>>::new();
+        let mut h_commit = BinaryHeap::<Reverse<TidOrderedTask>>::new();
+        let mut next = 0;
+        let len = h_tx.len();
+        let mut total_gas_usage = 0u64;
+        let mut access_tracker = AccessTracker::new();
+        
+        while next < len {
+            // Schedule tasks
+            // Move tasks from h_tx to h_ready
+            profiler::start("schedule");
+            while let Some(Reverse(SidOrderedTask(task))) = h_tx.pop() {
+                if task.sid <= next as i32 - 1 {
+                    h_ready.push(Reverse(TidOrderedTask(task)));
+                } else {
+                    h_tx.push(Reverse(SidOrderedTask(task)));
+                    break;
+                }
+            }
+            profiler::end("schedule");
+
+            // while !h_ready.is_empty() {
+            //     if let Some(Reverse(TidOrderedTask(task))) = h_ready.pop() {
+            //         h_threads.push(Reverse(GasOrderedTask(task)));
+            //     }
+            // }
+
+            // Execute tasks
+            let mut tasks: Vec<_> = h_ready.drain().collect();
+            tasks.sort_by(|a, b| {
+                // Sort by gas in descending order (high to low)
+                let Reverse(TidOrderedTask(task_a)) = a;
+                let Reverse(TidOrderedTask(task_b)) = b;
+                task_b.gas.cmp(&task_a.gas)
+            });
+            let results: Vec<_> = tasks.into_par_iter()
+            .map(|Reverse(TidOrderedTask(mut task))| {
+                let task_name = task.tid.to_string();
+                profiler::start(&task_name);
+
+                let genesis = profiler::get_genesis();
+                let duration_u64 = || (
+                    Instant::now().duration_since(genesis).as_nanos() as u64
+                ).into();
+                let mut description = Map::new();
+                description.insert("type".to_string(), Value::String("transaction".to_string()));
+
+                description.insert("arc_clone::start".to_string(), duration_u64());
+                let db = Arc::clone(&self.db);
+                description.insert("arc_clone::end".to_string(), duration_u64());
+
+                description.insert("db_read::start".to_string(), duration_u64());
+                let db_guard = db.read().unwrap();
+                description.insert("db_read::end".to_string(), duration_u64());
+                
+                description.insert("db_ref::start".to_string(), duration_u64());
+                let db_ref = WrapDatabaseRef(&*db_guard);
+                description.insert("db_ref::end".to_string(), duration_u64());
+
+                description.insert("evm_build::start".to_string(), duration_u64());
+                let mut evm = Evm::<OccdaWiring<'_>>::builder()
+                    .with_db(db_ref)
+                    .with_default_ext_ctx()
+                    .modify_env(|e| e.clone_from(&task.env))
+                    .build();
+                description.insert("evm_build::end".to_string(), duration_u64());
+
+                description.insert("transact::start".to_string(), duration_u64());
+                let result = evm.transact();
+                description.insert("transact::end".to_string(), duration_u64());
+
+                description.insert("get_rwset::start".to_string(), duration_u64());
+                let mut read_write_set = evm.get_read_write_set();
+                read_write_set.add_write(task.env.tx.caller, AccessType::AccountInfo);
+                task.read_write_set = Some(read_write_set);
+                description.insert("get_rwset::end".to_string(), duration_u64());
+                
+                description.insert("process_result::start".to_string(), duration_u64());
+                let status = match result {
+                    Ok(result_and_state) => {
+                        let ResultAndState { state, result  } = result_and_state;
+                        task.state = Some(state);
+                        task.gas = result.gas_used();
+                        if result.is_success() {
+                            "success"
+                        } else {
+                            "revert"
+                        }
+                    },
+                    Err(_) => {
+                        task.state = None;
+                        task.gas = 0;
+                        "abort"
+                    },
+                };
+                description.insert("process_result::end".to_string(), duration_u64());
+                description.insert("status".to_string(), Value::String(status.to_string()));
+                profiler::notes(&task_name, &mut description);
+                profiler::end(&task_name);
+                task
+            })
+            .collect();
+
+            // Wait for at least one task to complete
+            profiler::start("collect_gas");
+            for task in results {
+                total_gas_usage += task.gas;
+                h_commit.push(Reverse(TidOrderedTask(task)));
+            }
+            profiler::end("collect_gas");
+            // Commit tasks
+            // Commit or abort tasks
+
+            while let Some(Reverse(TidOrderedTask(mut task))) = h_commit.pop() {
+                if task.tid != next as i32 {
+                    h_commit.push(Reverse(TidOrderedTask(task)));
+                    break;
+                }
+                
+                profiler::start("commit");
+
+                let genesis = profiler::get_genesis();
+                let duration_u64 = || (
+                    Instant::now().duration_since(genesis).as_nanos() as u64
+                ).into();
+                let mut description = Map::new();
+                description.insert("type".to_string(), Value::String("commit".to_string()));
+                description.insert("tx".to_string(), Value::String(task.tid.to_string()));
+
+                // Check conflicts with all tasks between sid+1 and tid-1
+                description.insert("check_conflict::start".to_string(), duration_u64());
+                let conflict = access_tracker.check_conflict_in_range(
+                    &task.read_write_set.as_ref().unwrap().read_set,
+                    task.sid + 1,
+                    task.tid
+                );
+                description.insert("check_conflict::end".to_string(), duration_u64());
+                if conflict.is_some() {
+                    task.sid = task.tid - 1;
+                    h_tx.push(Reverse(SidOrderedTask(task)));
+                } else {
+                    // Commit the changes serially
+                    description.insert("db_mut::start".to_string(), duration_u64());
+                    let mut db_mut = self.db.write().unwrap();
+                    description.insert("db_mut::end".to_string(), duration_u64());
+
+                    description.insert("take_state::start".to_string(), duration_u64());
+                    let state_to_commit = task.state.ok_or_else(|| {
+                        eprintln!("Task state is None, returning error");
+                        Box::<dyn std::error::Error + Send + Sync>::from("Task state is None")
+                    }).unwrap();
+                    description.insert("take_state::end".to_string(), duration_u64());
+
+                    description.insert("db_commit::start".to_string(), duration_u64());
+                    db_mut.commit(state_to_commit);
+                    description.insert("db_commit::end".to_string(), duration_u64());
+                    
+                    description.insert("record_write::start".to_string(), duration_u64());
+                    access_tracker.record_write_set(
+                        task.tid,
+                        &task.read_write_set.as_ref().unwrap().write_set
+                    );
+                    description.insert("record_write::end".to_string(), duration_u64());
+                    next += 1;
+                }
+
+                profiler::notes("commit", &mut description);
+                profiler::end("commit");
+
+            }
+        }
+
+        Ok(total_gas_usage)
+    }
+
+    pub fn get_db(&self) -> CacheDB<EmptyDB> {
+        self.db.read().unwrap().clone()
+    }
+}
