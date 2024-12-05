@@ -7,8 +7,11 @@ target
 .idea
 pkg/
 
+largest1k
+
 bins/revme/temp_folder
 bins/revme/tests
+bins/revme/*.json
 ethereumjs-util.js
 book
 

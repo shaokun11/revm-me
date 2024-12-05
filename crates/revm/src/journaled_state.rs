@@ -1,12 +1,13 @@
-use crate::interpreter::{
-    AccountLoad, Eip7702CodeLoad, InstructionResult, SStoreResult, SelfDestructResult, StateLoad,
-};
-use crate::primitives::{
-    hash_map::Entry, Address, HashMap, HashSet, Log, B256, KECCAK_EMPTY, PRECOMPILE3, U256, Bytecode, SpecId, SpecId::*, 
-    state::{Account, EvmState, EvmStorageSlot, TransientStorage},
-};
-use crate::db::Database;
+use revm_interpreter::Eip7702CodeLoad;
 
+use crate::{
+    interpreter::{AccountLoad, InstructionResult, SStoreResult, SelfDestructResult, StateLoad},
+    primitives::{
+        db::Database, hash_map::Entry, Account, Address, Bytecode, EVMError, EvmState,
+        EvmStorageSlot, HashMap, HashSet, Log, SpecId, SpecId::*, TransientStorage, B256,
+        KECCAK_EMPTY, PRECOMPILE3, U256,
+    },
+};
 use core::mem;
 use std::vec::Vec;
 
@@ -14,8 +15,9 @@ use std::vec::Vec;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum AccessType {
     AccountInfo,
-    AccountState,
+    AccountStatus,
     StorageSlot(U256),
+    TransientSlot(U256),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -61,6 +63,7 @@ impl ReadWriteSet {
     }
 }
 
+
 /// A journal of state changes internal to the EVM.
 ///
 /// On each additional call, the depth of the journaled state is increased (`depth`) and a new journal is added. The journal contains every state change that happens within that call, making it possible to revert changes made in a specific call.
@@ -96,7 +99,8 @@ pub struct JournaledState {
     /// Note that this not include newly loaded accounts, account and storage
     /// is considered warm if it is found in the `State`.
     pub warm_preloaded_addresses: HashSet<Address>,
-    /// Read-Write Set to track accessed accounts and storage slots
+
+    /// Read-write set
     pub read_write_set: ReadWriteSet,
 }
 
@@ -133,6 +137,18 @@ impl JournaledState {
     #[inline]
     pub fn set_spec_id(&mut self, spec: SpecId) {
         self.spec = spec;
+    }
+
+    /// Returns a reference to the read-write set.
+    #[inline]
+    pub fn read_write_set(&mut self) -> ReadWriteSet {
+        std::mem::take(&mut self.read_write_set)
+    }
+
+    /// Reset the read-write set to empty
+    #[inline]
+    pub fn reset_read_write_set(&mut self) {
+        self.read_write_set = ReadWriteSet::default();
     }
 
     /// Mark account as touched as only touched accounts will be added to state.
@@ -249,6 +265,7 @@ impl JournaledState {
             .push(JournalEntry::NonceChange { address });
 
         account.info.nonce += 1;
+
         Some(account.info.nonce)
     }
 
@@ -260,7 +277,7 @@ impl JournaledState {
         to: &Address,
         balance: U256,
         db: &mut DB,
-    ) -> Result<Option<InstructionResult>, DB::Error> {
+    ) -> Result<Option<InstructionResult>, EVMError<DB::Error>> {
         self.read_write_set.add_write(*from, AccessType::AccountInfo);
         self.read_write_set.add_write(*to, AccessType::AccountInfo);
         // load accounts
@@ -323,7 +340,7 @@ impl JournaledState {
         spec_id: SpecId,
     ) -> Result<JournalCheckpoint, InstructionResult> {
         self.read_write_set.add_write(address, AccessType::AccountInfo);
-        self.read_write_set.add_write(address, AccessType::AccountState);
+        self.read_write_set.add_write(address, AccessType::AccountStatus);
         self.read_write_set.add_write(caller, AccessType::AccountInfo);
         // Enter subroutine
         let checkpoint = self.checkpoint();
@@ -548,10 +565,12 @@ impl JournaledState {
         address: Address,
         target: Address,
         db: &mut DB,
-    ) -> Result<StateLoad<SelfDestructResult>, DB::Error> {
+    ) -> Result<StateLoad<SelfDestructResult>, EVMError<DB::Error>> {
+        // Track the write access
         self.read_write_set.add_write(address, AccessType::AccountInfo);
         self.read_write_set.add_write(target, AccessType::AccountInfo);
-        self.read_write_set.add_write(target, AccessType::AccountState);
+        self.read_write_set.add_write(target, AccessType::AccountStatus);
+
         let spec = self.spec;
         let account_load = self.load_account(target, db)?;
         let is_cold = account_load.is_cold;
@@ -618,12 +637,13 @@ impl JournaledState {
         address: Address,
         storage_keys: impl IntoIterator<Item = U256>,
         db: &mut DB,
-    ) -> Result<&mut Account, DB::Error> {
+    ) -> Result<&mut Account, EVMError<DB::Error>> {
         // load or get account.
         let account = match self.state.entry(address) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(vac) => vac.insert(
-                db.basic(address)?
+                db.basic(address)
+                    .map_err(EVMError::Database)?
                     .map(|i| i.into())
                     .unwrap_or(Account::new_not_existing()),
             ),
@@ -631,7 +651,9 @@ impl JournaledState {
         // preload storages.
         for storage_key in storage_keys.into_iter() {
             if let Entry::Vacant(entry) = account.storage.entry(storage_key) {
-                let storage = db.storage(address, storage_key)?;
+                let storage = db
+                    .storage(address, storage_key)
+                    .map_err(EVMError::Database)?;
                 entry.insert(EvmStorageSlot::new(storage));
             }
         }
@@ -644,11 +666,9 @@ impl JournaledState {
         &mut self,
         address: Address,
         db: &mut DB,
-    ) -> Result<StateLoad<&mut Account>, DB::Error> {
-        // Track the read access
+    ) -> Result<StateLoad<&mut Account>, EVMError<DB::Error>> {
         self.read_write_set.add_read(address, AccessType::AccountInfo);
-        self.read_write_set.add_read(address, AccessType::AccountState);
-
+        self.read_write_set.add_read(address, AccessType::AccountStatus);
         let load = match self.state.entry(address) {
             Entry::Occupied(entry) => {
                 let account = entry.into_mut();
@@ -659,11 +679,12 @@ impl JournaledState {
                 }
             }
             Entry::Vacant(vac) => {
-                let account = if let Some(account) = db.basic(address)? {
-                    account.into()
-                } else {
-                    Account::new_not_existing()
-                };
+                let account =
+                    if let Some(account) = db.basic(address).map_err(EVMError::Database)? {
+                        account.into()
+                    } else {
+                        Account::new_not_existing()
+                    };
 
                 // precompiles are warm loaded so we need to take that into account
                 let is_cold = !self.warm_preloaded_addresses.contains(&address);
@@ -691,7 +712,7 @@ impl JournaledState {
         &mut self,
         address: Address,
         db: &mut DB,
-    ) -> Result<AccountLoad, DB::Error> {
+    ) -> Result<AccountLoad, EVMError<DB::Error>> {
         let spec = self.spec;
         let account = self.load_code(address, db)?;
         let is_empty = account.state_clear_aware_is_empty(spec);
@@ -718,7 +739,7 @@ impl JournaledState {
         &mut self,
         address: Address,
         db: &mut DB,
-    ) -> Result<StateLoad<&mut Account>, DB::Error> {
+    ) -> Result<StateLoad<&mut Account>, EVMError<DB::Error>> {
         let account_load = self.load_account(address, db)?;
         let acc = &mut account_load.data.info;
         if acc.code.is_none() {
@@ -726,7 +747,7 @@ impl JournaledState {
                 let empty = Bytecode::default();
                 acc.code = Some(empty);
             } else {
-                let code = db.code_by_hash(acc.code_hash)?;
+                let code = db.code_by_hash(acc.code_hash).map_err(EVMError::Database)?;
                 acc.code = Some(code);
             }
         }
@@ -744,8 +765,7 @@ impl JournaledState {
         address: Address,
         key: U256,
         db: &mut DB,
-    ) -> Result<StateLoad<U256>, DB::Error> {
-        // Track the read access
+    ) -> Result<StateLoad<U256>, EVMError<DB::Error>> {
         self.read_write_set.add_read(address, AccessType::StorageSlot(key));
         // assume acc is warm
         let account = self.state.get_mut(&address).unwrap();
@@ -762,7 +782,7 @@ impl JournaledState {
                 let value = if is_newly_created {
                     U256::ZERO
                 } else {
-                    db.storage(address, key)?
+                    db.storage(address, key).map_err(EVMError::Database)?
                 };
 
                 vac.insert(EvmStorageSlot::new(value));
@@ -795,8 +815,7 @@ impl JournaledState {
         key: U256,
         new: U256,
         db: &mut DB,
-    ) -> Result<StateLoad<SStoreResult>, DB::Error> {
-        // Track the write access
+    ) -> Result<StateLoad<SStoreResult>, EVMError<DB::Error>> {
         self.read_write_set.add_write(address, AccessType::StorageSlot(key));
         // assume that acc exists and load the slot.
         let present = self.sload(address, key, db)?;
@@ -842,6 +861,7 @@ impl JournaledState {
     /// EIP-1153: Transient storage opcodes
     #[inline]
     pub fn tload(&mut self, address: Address, key: U256) -> U256 {
+        self.read_write_set.add_read(address, AccessType::TransientSlot(key));
         self.transient_storage
             .get(&(address, key))
             .copied()
@@ -856,6 +876,7 @@ impl JournaledState {
     /// EIP-1153: Transient storage opcodes
     #[inline]
     pub fn tstore(&mut self, address: Address, key: U256, new: U256) {
+        self.read_write_set.add_write(address, AccessType::TransientSlot(key));
         let had_value = if new.is_zero() {
             // if new values is zero, remove entry from transient storage.
             // if previous values was some insert it inside journal.
@@ -894,18 +915,6 @@ impl JournaledState {
     #[inline]
     pub fn log(&mut self, log: Log) {
         self.logs.push(log);
-    }
-
-    /// Returns a reference to the read-write set.
-    #[inline]
-    pub fn read_write_set(&mut self) -> ReadWriteSet {
-        std::mem::take(&mut self.read_write_set)
-    }
-
-    /// Reset the read-write set to empty
-    #[inline]
-    pub fn reset_read_write_set(&mut self) {
-        self.read_write_set = ReadWriteSet::default();
     }
 }
 
