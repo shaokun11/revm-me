@@ -68,17 +68,19 @@ impl Occda
         &mut self,
         mut h_tx: BinaryHeap<Reverse<SidOrderedTask>>,
         db_mut: &mut DB
-    ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<ResultAndState>, Box<dyn std::error::Error + Send + Sync>> {
         let mut h_ready = BinaryHeap::<Reverse<TidOrderedTask>>::new();
         // let mut h_threads = BinaryHeap::<Reverse<GasOrderedTask>>::new();
         let mut h_commit = BinaryHeap::<Reverse<TidOrderedTask>>::new();
         let mut next = 0;
         let len = h_tx.len();
-        let mut total_gas_usage = 0u64;
+        // let mut total_gas_usage = 0u64;
         let mut access_tracker = AccessTracker::new();
         let db_shared = Arc::new(SyncState {
             inner: UnsafeCell::new(db_mut)
         });
+
+        let mut results_states: Vec<ResultAndState> = Vec::new();
         while next < len {
             // Schedule tasks
             // Move tasks from h_tx to h_ready
@@ -145,10 +147,10 @@ impl Occda
                         description.insert("process_result::start".to_string(), duration_u64());
                         let status = match result {
                             Ok(result_and_state) => {
-                                let ResultAndState { state, result  } = result_and_state;
+                                let ResultAndState { state, result } = result_and_state;
                                 task.state = Some(state);
-                                task.gas = result.gas_used();
-                                if result.is_success() {
+                                task.result = Some(result);
+                                if task.result.as_ref().unwrap().is_success() {
                                     "success"
                                 } else {
                                     "revert"
@@ -173,7 +175,10 @@ impl Occda
             // Wait for at least one task to complete
             profiler::start("collect_gas");
             for task in results {
-                total_gas_usage += task.gas;
+                results_states.push(ResultAndState { 
+                    state: task.state.clone().unwrap(), 
+                    result: task.result.clone().unwrap() 
+                });
                 h_commit.push(Reverse(TidOrderedTask(task)));
             }
             profiler::end("collect_gas");
@@ -244,6 +249,6 @@ impl Occda
             }
         }
 
-        Ok(total_gas_usage)
+        Ok(results_states)
     }
 }

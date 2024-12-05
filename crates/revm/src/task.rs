@@ -1,4 +1,4 @@
-use crate::primitives::{Env, EvmState};
+use crate::primitives::{Env, EvmState, ExecutionResult};
 use crate::journaled_state::ReadWriteSet;
 use std::cmp::Ordering;
 
@@ -9,6 +9,7 @@ pub struct Task {
     pub sid: i32,
     pub gas: u64,
     pub state: Option<EvmState>,
+    pub result: Option<ExecutionResult>,
 }
 
 impl Task {
@@ -20,6 +21,7 @@ impl Task {
             sid,
             env,
             state: None,
+            result: None,
         }
     }
 }
