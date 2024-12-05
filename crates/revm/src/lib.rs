@@ -21,7 +21,7 @@ mod frame;
 pub mod handler;
 mod inspector;
 mod journaled_state;
-mod task;
+pub mod task;
 pub mod occda;
 pub mod profiler;
 pub mod access_tracker;
