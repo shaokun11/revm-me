@@ -9,6 +9,7 @@ use crate::{
         specification::SpecId, BlockEnv, CfgEnv, EVMError, EVMResult, EnvWithHandlerCfg,
         ExecutionResult, HandlerCfg, ResultAndState, TxEnv, TxKind, EOF_MAGIC_BYTES,
     },
+    journaled_state::ReadWriteSet,
     Context, ContextWithHandlerCfg, Frame, FrameOrResult, FrameResult,
 };
 use core::fmt;
@@ -387,6 +388,13 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         post_exec.reward_beneficiary(ctx, result.gas())?;
         // Returns output of transaction.
         post_exec.output(ctx, result)
+    }
+
+    /// Returns the read-write set from the journaled state
+    pub fn get_read_write_set(&mut self) -> ReadWriteSet {
+        let ret = self.context.evm.journaled_state.read_write_set();
+        self.context.evm.journaled_state.reset_read_write_set();
+        ret
     }
 }
 

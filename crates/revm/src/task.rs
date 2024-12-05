@@ -1,10 +1,9 @@
-use state::EvmState;
-use wiring::default::{block::BlockEnv, Env, TxEnv};
-use crate::{db::states::state, journaled_state::ReadWriteSet};
+use crate::primitives::{Env, EvmState};
+use crate::journaled_state::ReadWriteSet;
 use std::cmp::Ordering;
 
 pub struct Task {
-    pub env: Box<Env<BlockEnv, TxEnv>>,
+    pub env: Box<Env>,
     pub read_write_set: Option<ReadWriteSet>,
     pub tid: i32,
     pub sid: i32,
@@ -13,7 +12,7 @@ pub struct Task {
 }
 
 impl Task {
-    pub fn new(env: Box<Env<BlockEnv, TxEnv>>, tid: i32, sid: i32) -> Self {
+    pub fn new(env: Box<Env>, tid: i32, sid: i32) -> Self {
         Task {
             gas: env.tx.gas_limit,
             read_write_set: None,

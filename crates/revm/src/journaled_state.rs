@@ -1,13 +1,11 @@
-use bytecode::Bytecode;
-use database_interface::Database;
-use interpreter::{
+use crate::interpreter::{
     AccountLoad, Eip7702CodeLoad, InstructionResult, SStoreResult, SelfDestructResult, StateLoad,
 };
-use primitives::{
-    hash_map::Entry, Address, HashMap, HashSet, Log, B256, KECCAK_EMPTY, PRECOMPILE3, U256,
+use crate::primitives::{
+    hash_map::Entry, Address, HashMap, HashSet, Log, B256, KECCAK_EMPTY, PRECOMPILE3, U256, Bytecode, SpecId, SpecId::*, 
+    state::{Account, EvmState, EvmStorageSlot, TransientStorage},
 };
-use specification::hardfork::{SpecId, SpecId::*};
-use state::{Account, EvmState, EvmStorageSlot, TransientStorage};
+use crate::db::Database;
 
 use core::mem;
 use std::vec::Vec;

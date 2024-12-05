@@ -1,30 +1,32 @@
+use core::cell::UnsafeCell;
 use std::collections::BinaryHeap;
 use std::cmp::Reverse;
 use std::time::Instant;
-use wiring::result::ResultAndState;
+use crate::primitives::{ResultAndState, SpecId};
 use crate::access_tracker::AccessTracker;
 use crate::journaled_state::AccessType;
 use crate::task::{SidOrderedTask, Task, TidOrderedTask};
 use crate::dag::TaskDag;
 use crate::evm::Evm;
-use crate::wiring::EthereumWiring;
 use crate::profiler;
-use database_interface::{DatabaseCommit, EmptyDB, WrapDatabaseRef};
-use database::CacheDB;
-use std::sync::{Arc, RwLock};
+use crate::db::{DatabaseCommit, Database};
+use std::sync::Arc;
 use serde_json::{Map, Value};
 use rayon::prelude::*;
 
-type OccdaWiring<'a> = EthereumWiring<WrapDatabaseRef<&'a CacheDB<EmptyDB>>, ()>;
+struct SyncState<'a, DB> {
+    inner: UnsafeCell<&'a mut DB>
+}
+unsafe impl<DB> Send for SyncState<'_, DB> {}
+unsafe impl<DB> Sync for SyncState<'_, DB> {}
 
 pub struct Occda {
-    db: Arc<RwLock<CacheDB<EmptyDB>>>,
     _dag: TaskDag,
 }
 
 impl Occda
 {
-    pub fn new(db: CacheDB<EmptyDB>, num_threads: usize) -> Self {
+    pub fn new(num_threads: usize) -> Self {
         // Initialize global thread pool during struct creation
         rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
@@ -32,7 +34,6 @@ impl Occda
             .unwrap();
 
         Occda {
-            db: Arc::new(RwLock::new(db)),
             _dag: TaskDag::new(),
         }
     }
@@ -63,7 +64,11 @@ impl Occda
         heap
     }
 
-    pub async fn main(&mut self, mut h_tx: BinaryHeap<Reverse<SidOrderedTask>>) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn main<DB: Database + DatabaseCommit + 'static>(
+        &mut self,
+        mut h_tx: BinaryHeap<Reverse<SidOrderedTask>>,
+        db_mut: &mut DB
+    ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
         let mut h_ready = BinaryHeap::<Reverse<TidOrderedTask>>::new();
         // let mut h_threads = BinaryHeap::<Reverse<GasOrderedTask>>::new();
         let mut h_commit = BinaryHeap::<Reverse<TidOrderedTask>>::new();
@@ -71,7 +76,9 @@ impl Occda
         let len = h_tx.len();
         let mut total_gas_usage = 0u64;
         let mut access_tracker = AccessTracker::new();
-        
+        let db_shared = Arc::new(SyncState {
+            inner: UnsafeCell::new(db_mut)
+        });
         while next < len {
             // Schedule tasks
             // Move tasks from h_tx to h_ready
@@ -101,70 +108,65 @@ impl Occda
                 task_b.gas.cmp(&task_a.gas)
             });
             let results: Vec<_> = tasks.into_par_iter()
-            .map(|Reverse(TidOrderedTask(mut task))| {
-                let task_name = task.tid.to_string();
-                profiler::start(&task_name);
+            .map({
+                let db_shared = Arc::clone(&db_shared);
+                move |Reverse(TidOrderedTask(mut task))| {
+                    let task_name = task.tid.to_string();
+                    profiler::start(&task_name);
 
-                let genesis = profiler::get_genesis();
-                let duration_u64 = || (
-                    Instant::now().duration_since(genesis).as_nanos() as u64
-                ).into();
-                let mut description = Map::new();
-                description.insert("type".to_string(), Value::String("transaction".to_string()));
+                    let genesis = profiler::get_genesis();
+                    let duration_u64 = || (
+                        Instant::now().duration_since(genesis).as_nanos() as u64
+                    ).into();
+                    let mut description = Map::new();
+                    description.insert("type".to_string(), Value::String("transaction".to_string()));
 
-                description.insert("arc_clone::start".to_string(), duration_u64());
-                let db = Arc::clone(&self.db);
-                description.insert("arc_clone::end".to_string(), duration_u64());
+                    description.insert("evm_build::start".to_string(), duration_u64());
+                    // let static_data: &'static mut State<DB> = unsafe { transmute(db_mut_clone) };
+                    unsafe {
+                        let db_ref = &mut **db_shared.inner.get();
+                        let mut evm = Evm::builder()
+                        .with_db(db_ref)
+                        .modify_env(|e| e.clone_from(&task.env))
+                        .with_spec_id(SpecId::CANCUN)
+                        .build();
+                        description.insert("evm_build::end".to_string(), duration_u64());
 
-                description.insert("db_read::start".to_string(), duration_u64());
-                let db_guard = db.read().unwrap();
-                description.insert("db_read::end".to_string(), duration_u64());
-                
-                description.insert("db_ref::start".to_string(), duration_u64());
-                let db_ref = WrapDatabaseRef(&*db_guard);
-                description.insert("db_ref::end".to_string(), duration_u64());
+                        description.insert("transact::start".to_string(), duration_u64());
+                        let result = evm.transact();
+                        description.insert("transact::end".to_string(), duration_u64());
 
-                description.insert("evm_build::start".to_string(), duration_u64());
-                let mut evm = Evm::<OccdaWiring<'_>>::builder()
-                    .with_db(db_ref)
-                    .with_default_ext_ctx()
-                    .modify_env(|e| e.clone_from(&task.env))
-                    .build();
-                description.insert("evm_build::end".to_string(), duration_u64());
-
-                description.insert("transact::start".to_string(), duration_u64());
-                let result = evm.transact();
-                description.insert("transact::end".to_string(), duration_u64());
-
-                description.insert("get_rwset::start".to_string(), duration_u64());
-                let mut read_write_set = evm.get_read_write_set();
-                read_write_set.add_write(task.env.tx.caller, AccessType::AccountInfo);
-                task.read_write_set = Some(read_write_set);
-                description.insert("get_rwset::end".to_string(), duration_u64());
-                
-                description.insert("process_result::start".to_string(), duration_u64());
-                let status = match result {
-                    Ok(result_and_state) => {
-                        let ResultAndState { state, result  } = result_and_state;
-                        task.state = Some(state);
-                        task.gas = result.gas_used();
-                        if result.is_success() {
-                            "success"
-                        } else {
-                            "revert"
-                        }
-                    },
-                    Err(_) => {
-                        task.state = None;
-                        task.gas = 0;
-                        "abort"
-                    },
-                };
-                description.insert("process_result::end".to_string(), duration_u64());
-                description.insert("status".to_string(), Value::String(status.to_string()));
-                profiler::notes(&task_name, &mut description);
-                profiler::end(&task_name);
-                task
+                        description.insert("get_rwset::start".to_string(), duration_u64());
+                        let mut read_write_set = evm.get_read_write_set();
+                        read_write_set.add_write(task.env.tx.caller, AccessType::AccountInfo);
+                        task.read_write_set = Some(read_write_set);
+                        description.insert("get_rwset::end".to_string(), duration_u64());
+                        
+                        description.insert("process_result::start".to_string(), duration_u64());
+                        let status = match result {
+                            Ok(result_and_state) => {
+                                let ResultAndState { state, result  } = result_and_state;
+                                task.state = Some(state);
+                                task.gas = result.gas_used();
+                                if result.is_success() {
+                                    "success"
+                                } else {
+                                    "revert"
+                                }
+                            },
+                            Err(_) => {
+                                task.state = None;
+                                task.gas = 0;
+                                "abort"
+                            },
+                        };
+                        description.insert("process_result::end".to_string(), duration_u64());
+                        description.insert("status".to_string(), Value::String(status.to_string()));
+                        profiler::notes(&task_name, &mut description);
+                        profiler::end(&task_name);
+                        task
+                    }
+                }
             })
             .collect();
 
@@ -208,7 +210,8 @@ impl Occda
                 } else {
                     // Commit the changes serially
                     description.insert("db_mut::start".to_string(), duration_u64());
-                    let mut db_mut = self.db.write().unwrap();
+                    // let db_mut: &'static mut State<DB> = unsafe { transmute(db) };
+
                     description.insert("db_mut::end".to_string(), duration_u64());
 
                     description.insert("take_state::start".to_string(), duration_u64());
@@ -219,7 +222,11 @@ impl Occda
                     description.insert("take_state::end".to_string(), duration_u64());
 
                     description.insert("db_commit::start".to_string(), duration_u64());
-                    db_mut.commit(state_to_commit);
+                    unsafe {
+                        let db_ref = &mut **db_shared.inner.get();
+                        db_ref.commit(state_to_commit);
+                    }
+                    // db_mut.commit(state_to_commit);
                     description.insert("db_commit::end".to_string(), duration_u64());
                     
                     description.insert("record_write::start".to_string(), duration_u64());
@@ -238,9 +245,5 @@ impl Occda
         }
 
         Ok(total_gas_usage)
-    }
-
-    pub fn get_db(&self) -> CacheDB<EmptyDB> {
-        self.db.read().unwrap().clone()
     }
 }
