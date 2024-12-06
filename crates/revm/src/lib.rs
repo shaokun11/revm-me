@@ -22,8 +22,10 @@ pub mod handler;
 mod inspector;
 mod journaled_state;
 pub mod task;
-pub mod occda;
+#[cfg(feature = "serde-json")]
 pub mod profiler;
+#[cfg(feature = "serde-json")]
+pub mod occda;
 pub mod access_tracker;
 #[cfg(feature = "optimism")]
 pub mod optimism;

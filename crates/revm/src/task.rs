@@ -2,6 +2,7 @@ use crate::primitives::{Env, EvmState, ExecutionResult};
 use crate::journaled_state::ReadWriteSet;
 use std::cmp::Ordering;
 
+#[derive(Clone)]
 pub struct Task {
     pub env: Box<Env>,
     pub read_write_set: Option<ReadWriteSet>,

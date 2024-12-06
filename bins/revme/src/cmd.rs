@@ -2,6 +2,7 @@ pub mod bytecode;
 pub mod eofvalidation;
 pub mod evmrunner;
 pub mod statetest;
+pub mod parallel;
 
 use structopt::{clap::AppSettings, StructOpt};
 
@@ -9,6 +10,8 @@ use structopt::{clap::AppSettings, StructOpt};
 #[structopt(setting = AppSettings::InferSubcommands)]
 #[allow(clippy::large_enum_variant)]
 pub enum MainCmd {
+    #[structopt(about = "Execute Ethereum state tests in parallel")]
+    ParallelTest(parallel::Cmd),
     #[structopt(about = "Execute Ethereum state tests")]
     Statetest(statetest::Cmd),
     #[structopt(about = "Execute eof validation tests")]
@@ -23,6 +26,8 @@ pub enum MainCmd {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error(transparent)]
+    ParallelTest(#[from] parallel::Error),
     #[error(transparent)]
     Statetest(#[from] statetest::Error),
     #[error(transparent)]
@@ -45,7 +50,8 @@ impl MainCmd {
             Self::Bytecode(cmd) => {
                 cmd.run();
                 Ok(())
-            }
+            },
+            Self::ParallelTest(cmd) => cmd.run().map_err(Into::into)
         }
     }
 }

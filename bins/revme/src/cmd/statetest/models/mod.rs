@@ -12,6 +12,8 @@ use std::collections::BTreeMap;
 
 #[derive(Debug, PartialEq, Eq, Deserialize)]
 pub struct TestSuite(pub BTreeMap<String, TestUnit>);
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+pub struct MultiTestSuite(pub BTreeMap<String, MultiTestUnit>);
 
 #[derive(Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -24,6 +26,22 @@ pub struct TestUnit {
     pub pre: HashMap<Address, AccountInfo>,
     pub post: BTreeMap<SpecName, Vec<Test>>,
     pub transaction: TransactionParts,
+    #[serde(default)]
+    pub out: Option<Bytes>,
+}
+
+/// A single multi-threaded test unit.
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MultiTestUnit {
+    /// Test info is optional
+    #[serde(default, rename = "_info")]
+    pub info: Option<serde_json::Value>,
+
+    pub env: Env,
+    pub post: Option<serde_json::Value>,
+    pub pre: HashMap<Address, AccountInfo>,
+    pub transaction: Vec<MultiTransactionParts>,
     #[serde(default)]
     pub out: Option<Bytes>,
 }
@@ -129,6 +147,31 @@ pub struct TransactionParts {
     pub access_lists: Vec<Option<AccessList>>,
     #[serde(default)]
     pub authorization_list: Vec<Authorization>,
+    #[serde(default)]
+    pub blob_versioned_hashes: Vec<B256>,
+    pub max_fee_per_blob_gas: Option<U256>,
+}
+
+#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MultiTransactionParts {
+    pub data: Bytes,
+    pub gas_limit: U256,
+    pub gas_price: Option<U256>,
+    pub nonce: U256,
+    pub secret_key: B256,
+    /// if sender is not present we need to derive it from secret key.
+    #[serde(default)]
+    pub sender: Option<Address>,
+    #[serde(default, deserialize_with = "deserialize_maybe_empty")]
+    pub to: Option<Address>,
+    pub value: U256,
+    pub max_fee_per_gas: Option<U256>,
+    pub max_priority_fee_per_gas: Option<U256>,
+
+    #[serde(default)]
+    pub access_lists: Vec<Option<AccessList>>,
+    pub authorization_list: Option<Vec<Authorization>>,
     #[serde(default)]
     pub blob_versioned_hashes: Vec<B256>,
     pub max_fee_per_blob_gas: Option<U256>,
