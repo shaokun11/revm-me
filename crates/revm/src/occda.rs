@@ -12,6 +12,7 @@ use crate::profiler;
 use crate::db::{DatabaseCommit, Database, DatabaseRef};
 use std::sync::Arc;
 use serde_json::{Map, Value};
+use rayon::ThreadPool;
 use rayon::prelude::*;
 
 struct SyncState<'a, DB> {
@@ -22,19 +23,21 @@ unsafe impl<DB> Sync for SyncState<'_, DB> {}
 
 pub struct Occda {
     _dag: TaskDag,
+    thread_pool: ThreadPool
 }
 
 impl Occda
 {
     pub fn new(num_threads: usize) -> Self {
         // Initialize global thread pool during struct creation
-        rayon::ThreadPoolBuilder::new()
+        let thread_pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
-            .build_global()
+            .build()
             .unwrap();
 
         Occda {
             _dag: TaskDag::new(),
+            thread_pool
         }
     }
 
@@ -109,8 +112,10 @@ impl Occda
                 let Reverse(TidOrderedTask(task_b)) = b;
                 task_b.gas.cmp(&task_a.gas)
             });
-            let results: Vec<_> = tasks.into_par_iter()
-            .map({
+            
+            let results: Vec<_> = self.thread_pool.install(|| {
+                tasks.into_par_iter()
+                .map({
                 let db_shared = Arc::clone(&db_shared);
                 move |Reverse(TidOrderedTask(mut task))| {
                     let task_name = task.tid.to_string();
@@ -170,7 +175,8 @@ impl Occda
                     }
                 }
             })
-            .collect();
+            .collect()
+            });
 
             // Wait for at least one task to complete
             profiler::start("collect_gas");
@@ -285,9 +291,10 @@ impl Occda
                 task_b.gas.cmp(&task_a.gas)
             });
             let db_ref = &*db_mut;
-            let results: Vec<_> = tasks.into_par_iter()
-            .map({
-                move |Reverse(TidOrderedTask(mut task))| {
+            let results: Vec<_> = self.thread_pool.install(|| {
+                tasks.into_par_iter()
+                .map({
+                    move |Reverse(TidOrderedTask(mut task))| {
                     let task_name = task.tid.to_string();
                     profiler::start(&task_name);
 
@@ -341,7 +348,7 @@ impl Occda
                     task
                 }
             })
-            .collect();
+            .collect()});
 
             // 收集结果
             profiler::start("collect_gas");
