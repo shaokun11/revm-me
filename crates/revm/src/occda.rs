@@ -10,6 +10,7 @@ use crate::task::{SidOrderedTask, Task, TidOrderedTask};
 use crate::dag::TaskDag;
 use crate::evm::Evm;
 use crate::profiler;
+use crate::inspector::GetInspector;
 use crate::db::{DatabaseCommit, Database, DatabaseRef};
 use std::sync::Arc;
 use serde_json::{Map, Value};
@@ -269,14 +270,15 @@ impl Occda
         Ok(results_states)
     }
 
-    pub async fn main_with_db_ref<DB: DatabaseRef + DatabaseCommit + Sync + 'static>(
+    pub async fn main_with_db_ref<DB: DatabaseRef + Database + DatabaseCommit + Sync + 'static, I>(
         &mut self,
         mut h_tx: BinaryHeap<Reverse<SidOrderedTask>>,
-        db_mut: &mut DB
+        db_mut: &mut DB,
+        inspector: &I
     ) -> Result<Vec<ResultAndState>, Box<dyn std::error::Error + Send + Sync>>
     where
         DB: DatabaseRef + DatabaseCommit + 'static,
-        DB::Error: Debug,
+        I: GetInspector<DB> + Send + Sync
      {
         let mut h_ready = BinaryHeap::<Reverse<TidOrderedTask>>::new();
         let mut h_commit = BinaryHeap::<Reverse<TidOrderedTask>>::new();
@@ -311,6 +313,7 @@ impl Occda
                             .with_ref_db(db_ref)
                             .modify_env(|e| e.clone_from(&task.env))
                             .with_spec_id(task.spec_id)
+                            .with_external_context(inspector)
                             .build();
                         let result = evm.transact();
                         let mut read_write_set = evm.get_read_write_set();
@@ -327,8 +330,7 @@ impl Occda
                                     "revert"
                                 }
                             },
-                            Err(error) => {
-                                println!("Execution Error: {:?}", error);
+                            Err(_) => {
                                 task.state = None;
                                 task.gas = 0;
                                 "abort"
