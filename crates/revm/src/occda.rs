@@ -220,6 +220,10 @@ impl Occda
                     task.sid = task.tid - 1;
                     h_tx.push(Reverse(SidOrderedTask(task)));
                 } else {
+                    if task.state.is_none() {
+                        eprintln!("Task state is None");
+                        continue;
+                    }
                     // Commit the changes serially
                     description.insert("db_mut::start".to_string(), duration_u64());
                     // let db_mut: &'static mut State<DB> = unsafe { transmute(db) };
@@ -387,6 +391,10 @@ impl Occda
                     task.sid = task.tid - 1;
                     h_tx.push(Reverse(SidOrderedTask(task)));
                 } else {
+                    if task.state.is_none() {
+                        eprintln!("Task state is None");
+                        continue;
+                    }
                     description.insert("db_commit::start".to_string(), duration_u64());
                     let state_to_commit = task.state.ok_or_else(|| {
                         eprintln!("Task state is None, returning error");
