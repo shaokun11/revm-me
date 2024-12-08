@@ -275,7 +275,7 @@ pub fn run_parallel(
         };
         env.tx.transact_to = to;
 
-        tasks.push(Task::new(env.clone(), idx, -1));
+        tasks.push(Task::new(env.clone(), idx, -1, SpecId::CANCUN));
         idx += 1;
     }
 

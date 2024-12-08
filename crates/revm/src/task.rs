@@ -1,10 +1,11 @@
-use crate::primitives::{Env, EvmState, ExecutionResult};
+use crate::primitives::{Env, EvmState, ExecutionResult, SpecId};
 use crate::journaled_state::ReadWriteSet;
 use std::cmp::Ordering;
 
 #[derive(Clone)]
 pub struct Task {
     pub env: Box<Env>,
+    pub spec_id: SpecId,
     pub read_write_set: Option<ReadWriteSet>,
     pub tid: i32,
     pub sid: i32,
@@ -14,13 +15,14 @@ pub struct Task {
 }
 
 impl Task {
-    pub fn new(env: Box<Env>, tid: i32, sid: i32) -> Self {
+    pub fn new(env: Box<Env>, tid: i32, sid: i32, spec_id: SpecId) -> Self {
         Task {
             gas: env.tx.gas_limit,
             read_write_set: None,
             tid,
             sid,
             env,
+            spec_id,
             state: None,
             result: None,
         }

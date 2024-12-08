@@ -310,7 +310,7 @@ impl Occda
                     let mut evm = Evm::builder()
                             .with_ref_db(db_ref)
                             .modify_env(|e| e.clone_from(&task.env))
-                            .with_spec_id(SpecId::CANCUN)
+                            .with_spec_id(task.spec_id)
                             .build();
                         let result = evm.transact();
                         let mut read_write_set = evm.get_read_write_set();
