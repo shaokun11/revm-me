@@ -275,7 +275,7 @@ impl Occda
         db_mut: &mut DB
     ) -> Result<Vec<ResultAndState>, Box<dyn std::error::Error + Send + Sync>>
     where
-        DB: Database + DatabaseCommit + 'static,
+        DB: DatabaseRef + DatabaseCommit + 'static,
         DB::Error: Debug,
      {
         let mut h_ready = BinaryHeap::<Reverse<TidOrderedTask>>::new();
