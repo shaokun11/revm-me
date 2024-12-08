@@ -221,6 +221,7 @@ impl Occda
                     h_tx.push(Reverse(SidOrderedTask(task)));
                 } else {
                     if task.state.is_none() {
+                        next += 1;
                         eprintln!("Task state is None");
                         continue;
                     }
@@ -323,7 +324,6 @@ impl Occda
                                 }
                             },
                             Err(_) => {
-                                
                                 task.gas = 0;
                                 "abort"
                             },
@@ -354,6 +354,7 @@ impl Occda
                     h_tx.push(Reverse(SidOrderedTask(task)));
                 } else {
                     if task.state.is_none() {
+                        next += 1;
                         eprintln!("Task state is None");
                         continue;
                     }
