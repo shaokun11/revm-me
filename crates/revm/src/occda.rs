@@ -2,6 +2,7 @@ use core::cell::UnsafeCell;
 use std::collections::BinaryHeap;
 use std::cmp::Reverse;
 use std::time::Instant;
+use std::fmt::Debug;
 use crate::primitives::{ResultAndState, SpecId};
 use crate::access_tracker::AccessTracker;
 use crate::journaled_state::AccessType;
@@ -70,7 +71,11 @@ impl Occda
         &mut self,
         mut h_tx: BinaryHeap<Reverse<SidOrderedTask>>,
         db_mut: &mut DB
-    ) -> Result<Vec<ResultAndState>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<ResultAndState>, Box<dyn std::error::Error + Send + Sync>> 
+    where
+        DB: Database + DatabaseCommit + 'static,
+        DB::Error: Debug,
+    {
         let mut h_ready = BinaryHeap::<Reverse<TidOrderedTask>>::new();
         // let mut h_threads = BinaryHeap::<Reverse<GasOrderedTask>>::new();
         let mut h_commit = BinaryHeap::<Reverse<TidOrderedTask>>::new();
@@ -160,7 +165,8 @@ impl Occda
                                     "revert"
                                 }
                             },
-                            Err(_) => {
+                            Err(error) => {
+                                println!("Execution Error: {:?}", error);
                                 task.state = None;
                                 task.gas = 0;
                                 "abort"
@@ -180,10 +186,6 @@ impl Occda
             // Wait for at least one task to complete
             profiler::start("collect_gas");
             for task in results {
-                results_states.push(ResultAndState { 
-                    state: task.state.clone().unwrap_or_default(), 
-                    result: task.result.clone().unwrap() 
-                });
                 h_commit.push(Reverse(TidOrderedTask(task)));
             }
             profiler::end("collect_gas");
@@ -234,10 +236,15 @@ impl Occda
                     description.insert("db_commit::start".to_string(), duration_u64());
                     unsafe {
                         let db_ref = &mut **db_shared.inner.get();
-                        db_ref.commit(state_to_commit);
+                        db_ref.commit(state_to_commit.clone());
                     }
                     // db_mut.commit(state_to_commit);
                     description.insert("db_commit::end".to_string(), duration_u64());
+
+                    results_states.push(ResultAndState { 
+                        state: state_to_commit, 
+                        result: task.result.clone().unwrap() 
+                    });
                     
                     description.insert("record_write::start".to_string(), duration_u64());
                     access_tracker.record_write_set(
@@ -270,7 +277,6 @@ impl Occda
 
         let mut results_states: Vec<ResultAndState> = Vec::new();
         while next < len {
-            // 调度任务
             profiler::start("schedule");
             while let Some(Reverse(SidOrderedTask(task))) = h_tx.pop() {
                 if task.sid <= next as i32 - 1 {
@@ -282,7 +288,6 @@ impl Occda
             }
             profiler::end("schedule");
 
-            // 执行任务
             let mut tasks: Vec<_> = h_ready.drain().collect();
             tasks.sort_by(|a, b| {
                 let Reverse(TidOrderedTask(task_a)) = a;
@@ -335,7 +340,7 @@ impl Occda
                                 }
                             },
                             Err(_) => {
-                                task.state = None;
+                                
                                 task.gas = 0;
                                 "abort"
                             },
@@ -349,18 +354,12 @@ impl Occda
             })
             .collect()});
 
-            // 收集结果
             profiler::start("collect_gas");
             for task in results {
-                results_states.push(ResultAndState { 
-                    state: task.state.clone().unwrap_or_default(), 
-                    result: task.result.clone().unwrap() 
-                });
                 h_commit.push(Reverse(TidOrderedTask(task)));
             }
             profiler::end("collect_gas");
 
-            // 提交任务
             while let Some(Reverse(TidOrderedTask(mut task))) = h_commit.pop() {
                 if task.tid != next as i32 {
                     h_commit.push(Reverse(TidOrderedTask(task)));
@@ -389,10 +388,11 @@ impl Occda
                     h_tx.push(Reverse(SidOrderedTask(task)));
                 } else {
                     description.insert("db_commit::start".to_string(), duration_u64());
-                    db_mut.commit(task.state.ok_or_else(|| {
+                    let state_to_commit = task.state.ok_or_else(|| {
                         eprintln!("Task state is None, returning error");
                         Box::<dyn std::error::Error + Send + Sync>::from("Task state is None")
-                    }).unwrap());
+                    }).unwrap();
+                    db_mut.commit(state_to_commit.clone());
                     description.insert("db_commit::end".to_string(), duration_u64());
 
                     description.insert("record_write::start".to_string(), duration_u64());
@@ -400,6 +400,12 @@ impl Occda
                         task.tid,
                         &task.read_write_set.as_ref().unwrap().write_set
                     );
+
+                    results_states.push(ResultAndState { 
+                        state: state_to_commit, 
+                        result: task.result.clone().unwrap() 
+                    });
+                    
                     description.insert("record_write::end".to_string(), duration_u64());
                     next += 1;
                 }
