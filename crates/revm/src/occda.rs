@@ -338,11 +338,9 @@ impl Occda
             .collect()});
 
             for task in results {
-                println!("pushing task to h_commit: {}", task.tid);
                 h_commit.push(Reverse(TidOrderedTask(task)));
             }
 
-            println!("finished executing tasks size: {}", h_commit.len());
             while let Some(Reverse(TidOrderedTask(mut task))) = h_commit.pop() {
                 if task.tid != next as i32 {
                     h_commit.push(Reverse(TidOrderedTask(task)));
@@ -360,7 +358,6 @@ impl Occda
                 } else {
                     if task.state.is_none() {
                         next += 1;
-                        eprintln!("Task state is None");
                         continue;
                     }
                     let state_to_commit = task.state.ok_or_else(|| {
