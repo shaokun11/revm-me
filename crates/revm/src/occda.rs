@@ -317,6 +317,8 @@ impl Occda
                                 let ResultAndState { state, result } = result_and_state;
                                 task.state = Some(state);
                                 task.result = Some(result);
+                                println!("task.result: {:?}", task.result);
+                                println!("task.state: {:?}", task.state);
                                 if task.result.as_ref().unwrap().is_success() {
                                     "success"
                                 } else {
@@ -334,6 +336,7 @@ impl Occda
             .collect()});
 
             for task in results {
+                println!("pushing task to h_commit: {}", task.tid);
                 h_commit.push(Reverse(TidOrderedTask(task)));
             }
 
