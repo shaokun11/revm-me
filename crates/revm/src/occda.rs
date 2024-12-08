@@ -29,7 +29,6 @@ pub struct Occda {
 impl Occda
 {
     pub fn new(num_threads: usize) -> Self {
-        // Initialize global thread pool during struct creation
         let thread_pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
             .build()
@@ -182,7 +181,7 @@ impl Occda
             profiler::start("collect_gas");
             for task in results {
                 results_states.push(ResultAndState { 
-                    state: task.state.clone().unwrap(), 
+                    state: task.state.clone().unwrap_or_default(), 
                     result: task.result.clone().unwrap() 
                 });
                 h_commit.push(Reverse(TidOrderedTask(task)));
@@ -354,8 +353,8 @@ impl Occda
             profiler::start("collect_gas");
             for task in results {
                 results_states.push(ResultAndState { 
-                    state: task.state.clone().unwrap(), 
-                    result: task.result.clone().unwrap() 
+                    state: task.state.clone().unwrap_or_default(), 
+                    result: task.result.clone().unwrap_or_default() 
                 });
                 h_commit.push(Reverse(TidOrderedTask(task)));
             }
