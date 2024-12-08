@@ -281,7 +281,6 @@ impl Occda
 
         let mut results_states: Vec<ResultAndState> = Vec::new();
         while next < len {
-            profiler::start("schedule");
             while let Some(Reverse(SidOrderedTask(task))) = h_tx.pop() {
                 if task.sid <= next as i32 - 1 {
                     h_ready.push(Reverse(TidOrderedTask(task)));
@@ -290,7 +289,6 @@ impl Occda
                     break;
                 }
             }
-            profiler::end("schedule");
 
             let mut tasks: Vec<_> = h_ready.drain().collect();
             tasks.sort_by(|a, b| {
@@ -303,36 +301,17 @@ impl Occda
                 tasks.into_par_iter()
                 .map({
                     move |Reverse(TidOrderedTask(mut task))| {
-                    let task_name = task.tid.to_string();
-                    profiler::start(&task_name);
 
-                    let genesis = profiler::get_genesis();
-                    let duration_u64 = || (
-                        Instant::now().duration_since(genesis).as_nanos() as u64
-                    ).into();
-                    let mut description = Map::new();
-                    description.insert("type".to_string(), Value::String("transaction".to_string()));
-
-                    description.insert("evm_build::start".to_string(), duration_u64());
                     let mut evm = Evm::builder()
                             .with_ref_db(db_ref)
                             .modify_env(|e| e.clone_from(&task.env))
                             .with_spec_id(SpecId::CANCUN)
                             .build();
-                        description.insert("evm_build::end".to_string(), duration_u64());
-
-                        description.insert("transact::start".to_string(), duration_u64());
                         let result = evm.transact();
-                        description.insert("transact::end".to_string(), duration_u64());
-
-                        description.insert("get_rwset::start".to_string(), duration_u64());
                         let mut read_write_set = evm.get_read_write_set();
                         read_write_set.add_write(task.env.tx.caller, AccessType::AccountInfo);
                         task.read_write_set = Some(read_write_set);
-                        description.insert("get_rwset::end".to_string(), duration_u64());
-                        
-                        description.insert("process_result::start".to_string(), duration_u64());
-                        let status = match result {
+                        match result {
                             Ok(result_and_state) => {
                                 let ResultAndState { state, result } = result_and_state;
                                 task.state = Some(state);
@@ -349,44 +328,27 @@ impl Occda
                                 "abort"
                             },
                         };
-                    description.insert("process_result::end".to_string(), duration_u64());
-                    description.insert("status".to_string(), Value::String(status.to_string()));
-                    profiler::notes(&task_name, &mut description);
-                    profiler::end(&task_name);
                     task
                 }
             })
             .collect()});
 
-            profiler::start("collect_gas");
             for task in results {
                 h_commit.push(Reverse(TidOrderedTask(task)));
             }
-            profiler::end("collect_gas");
 
+            println!("finished executing tasks size: {}", h_commit.len());
             while let Some(Reverse(TidOrderedTask(mut task))) = h_commit.pop() {
                 if task.tid != next as i32 {
                     h_commit.push(Reverse(TidOrderedTask(task)));
                     break;
                 }
 
-                profiler::start("commit");
-
-                let genesis = profiler::get_genesis();
-                let duration_u64 = || (
-                    Instant::now().duration_since(genesis).as_nanos() as u64
-                ).into();
-                let mut description = Map::new();
-                description.insert("type".to_string(), Value::String("commit".to_string()));
-                description.insert("tx".to_string(), Value::String(task.tid.to_string()));
-
-                description.insert("check_conflict::start".to_string(), duration_u64());
                 let conflict = access_tracker.check_conflict_in_range(
                     &task.read_write_set.as_ref().unwrap().read_set,
                     task.sid + 1,
                     task.tid
                 );
-                description.insert("check_conflict::end".to_string(), duration_u64());
                 if conflict.is_some() {
                     task.sid = task.tid - 1;
                     h_tx.push(Reverse(SidOrderedTask(task)));
@@ -395,15 +357,12 @@ impl Occda
                         eprintln!("Task state is None");
                         continue;
                     }
-                    description.insert("db_commit::start".to_string(), duration_u64());
                     let state_to_commit = task.state.ok_or_else(|| {
                         eprintln!("Task state is None, returning error");
                         Box::<dyn std::error::Error + Send + Sync>::from("Task state is None")
                     }).unwrap();
                     db_mut.commit(state_to_commit.clone());
-                    description.insert("db_commit::end".to_string(), duration_u64());
 
-                    description.insert("record_write::start".to_string(), duration_u64());
                     access_tracker.record_write_set(
                         task.tid,
                         &task.read_write_set.as_ref().unwrap().write_set
@@ -414,13 +373,11 @@ impl Occda
                         result: task.result.clone().unwrap() 
                     });
                     
-                    description.insert("record_write::end".to_string(), duration_u64());
                     next += 1;
                 }
-
-                profiler::notes("commit", &mut description);
-                profiler::end("commit");
             }
+
+            println!("finished committing tasks size: {}", results_states.len());
         }
 
         Ok(results_states)
