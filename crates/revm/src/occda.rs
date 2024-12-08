@@ -269,7 +269,7 @@ impl Occda
         Ok(results_states)
     }
 
-    pub async fn main_with_db_ref<DB: DatabaseRef + DatabaseCommit + Sync + 'static, I>(
+    pub async fn main_with_db_ref<DB: DatabaseRef + DatabaseCommit + Sync + 'static>(
         &mut self,
         mut h_tx: BinaryHeap<Reverse<SidOrderedTask>>,
         db_mut: &mut DB
