@@ -10,7 +10,6 @@ use crate::task::{SidOrderedTask, Task, TidOrderedTask};
 use crate::dag::TaskDag;
 use crate::evm::Evm;
 use crate::profiler;
-use crate::inspector::GetInspector;
 use crate::db::{DatabaseCommit, Database, DatabaseRef};
 use std::sync::Arc;
 use serde_json::{Map, Value};
