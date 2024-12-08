@@ -273,7 +273,11 @@ impl Occda
         &mut self,
         mut h_tx: BinaryHeap<Reverse<SidOrderedTask>>,
         db_mut: &mut DB
-    ) -> Result<Vec<ResultAndState>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<ResultAndState>, Box<dyn std::error::Error + Send + Sync>>
+    where
+        DB: Database + DatabaseCommit + 'static,
+        DB::Error: Debug,
+     {
         let mut h_ready = BinaryHeap::<Reverse<TidOrderedTask>>::new();
         let mut h_commit = BinaryHeap::<Reverse<TidOrderedTask>>::new();
         let mut next = 0;
@@ -325,7 +329,9 @@ impl Occda
                                     "revert"
                                 }
                             },
-                            Err(_) => {
+                            Err(error) => {
+                                println!("Execution Error: {:?}", error);
+                                task.state = None;
                                 task.gas = 0;
                                 "abort"
                             },
