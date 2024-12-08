@@ -354,7 +354,7 @@ impl Occda
             for task in results {
                 results_states.push(ResultAndState { 
                     state: task.state.clone().unwrap_or_default(), 
-                    result: task.result.clone().unwrap_or_default() 
+                    result: task.result.clone().unwrap() 
                 });
                 h_commit.push(Reverse(TidOrderedTask(task)));
             }
