@@ -233,6 +233,8 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         let output = self.transact_preverified_inner(initial_gas_spend);
         let output = self.handler.post_execution().end(&mut self.context, output);
         self.clear();
+
+        // std::thread::sleep(std::time::Duration::from_millis(10));
         output
     }
 
@@ -293,6 +295,10 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
     /// Modify spec id, this will create new EVM that matches this spec id.
     pub fn modify_spec_id(&mut self, spec_id: SpecId) {
         self.handler.modify_spec_id(spec_id);
+    }
+
+    pub fn modify_db(&mut self, db: DB) {
+        self.context.evm.db = db;
     }
 
     /// Returns internal database and external struct.

@@ -4,7 +4,7 @@ use super::{
 };
 use crate::db::EmptyDB;
 use revm_interpreter::primitives::{
-    db::{Database, DatabaseCommit},
+    db::{Database, DatabaseRef, DatabaseCommit},
     hash_map, Account, AccountInfo, Address, Bytecode, HashMap, B256, BLOCK_HASH_HISTORY, U256,
 };
 use std::{
@@ -215,6 +215,53 @@ impl<DB: Database> State<DB> {
     }
 }
 
+impl<DB: DatabaseRef> DatabaseRef for State<DB> {
+    type Error = DB::Error;
+
+    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        let res = match self.cache.accounts.get(&address) {
+            Some(account) => Ok(account.account_info()),
+            None => self.database.basic_ref(address),
+        };
+        res
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        let res = match self.cache.contracts.get(&code_hash ) {
+            Some(entry) => Ok(entry.clone()),
+            None => self.database.code_by_hash_ref(code_hash),
+        };
+        res
+    }
+
+    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        if let Some(account) = self.cache.accounts.get(&address) {
+            let is_storage_known = account.status.is_storage_known();
+            Ok(account.account.as_ref().map(|a| match a.storage.get(&index) {
+                Some(entry) => Ok(*entry),
+                None => {
+                    let value = if is_storage_known {
+                        U256::ZERO
+                    } else {
+                        self.database.storage_ref(address, index)?
+                    };
+                    Ok(value)
+                },
+            }).transpose()?
+            .unwrap_or_default())
+        } else {
+            unreachable!("For accessing any storage account is guaranteed to be loaded beforehand")
+        }
+    }
+
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
+        match self.block_hashes.get(&number) {
+            Some(hash) => Ok(*hash),
+            None => self.database.block_hash_ref(number),
+        }
+    }
+}
+
 impl<DB: Database> Database for State<DB> {
     type Error = DB::Error;
 
@@ -294,6 +341,10 @@ impl<DB: Database> Database for State<DB> {
 }
 
 impl<DB: Database> DatabaseCommit for State<DB> {
+    // fn commit(&mut self, evm_state: HashMap<Address, Account>) {
+    //     let transitions = self.cache.apply_evm_state(evm_state);
+    //     self.apply_transition(transitions);
+    // }
     fn commit(&mut self, evm_state: HashMap<Address, Account>) {
         let transitions = self.cache.apply_evm_state(evm_state);
         self.apply_transition(transitions);

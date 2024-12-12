@@ -58,6 +58,8 @@ alloy-transport = { version = "0.5.4", optional = true, default-features = false
 once_cell = "1.19.0"
 rayon = "1.10.0"
 parking_lot = "0.12"
+crossbeam = "0.8"
+
 [dev-dependencies]
 alloy-sol-types = { version = "0.8.2", default-features = false, features = [
     "std",

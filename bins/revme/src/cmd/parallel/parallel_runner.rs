@@ -293,7 +293,7 @@ pub fn run_parallel(
         profiler::dump_json("./profiler_output.json");
         println!("Execution time: {:?}", elapsed);
         // println!("trie_account: {:#?}", state.cache);
-        // println!("\nState root: {:#?}", state_merkle_trie_root(state.cache.trie_account()));
+        println!("\nState root: {:#?}", state_merkle_trie_root(state.cache.trie_account()));
     });
 
     Ok(())

@@ -110,10 +110,12 @@ impl CacheState {
             return None;
         }
 
-        let this_account = self
-            .accounts
-            .get_mut(&address)
-            .expect("All accounts should be present inside cache");
+        let this_account = self.accounts.entry(address).or_insert(CacheAccount::new_loaded_not_existing());
+
+        // let this_account = self
+        //     .accounts
+        //     .get_mut(&address)
+        //     .expect("All accounts should be present inside cache");
 
         // If it is marked as selfdestructed inside revm
         // we need to changed state to destroyed.
