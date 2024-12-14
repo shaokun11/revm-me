@@ -12,6 +12,7 @@ use std::sync::Arc;
 use rayon::ThreadPool;
 use rayon::prelude::*;
 use parking_lot::RwLock;
+use std::mem::MaybeUninit;
 
 pub struct Occda {
     _dag: TaskDag,
@@ -108,7 +109,12 @@ impl Occda
                     move |Reverse(TidOrderedTask(mut task))| {
                         let db_ref = db_shared.read();
                         
-                        let inspector = std::mem::replace(&mut task.inspector, unsafe { std::mem::zeroed() });
+                        let inspector = unsafe {
+                            std::mem::replace(
+                                &mut task.inspector,
+                                MaybeUninit::uninit().assume_init()
+                            )
+                        };
                         let mut evm = Evm::builder()
                             .with_ref_db(&*db_ref)
                             .modify_env(|e| e.clone_from(&task.env))
