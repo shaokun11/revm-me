@@ -10,6 +10,7 @@ use revm::{
     db::{State, CacheState},
     occda::Occda,
     task::Task,
+    inspectors::NoOpInspector,
     primitives::{keccak256, Bytes, TxKind, B256, Bytecode, SpecId, AccountInfo, Env},
     profiler,
     Evm
@@ -235,7 +236,7 @@ pub fn run_parallel(
     // TODO: commented out, need to fix
     let mut occda = Occda::new( num_of_threads);
 
-    let mut tasks: Vec<Task> = vec![];
+    let mut tasks: Vec<Task<_>> = vec![];
     let mut idx = 0;
     // post and execution
 
@@ -275,7 +276,7 @@ pub fn run_parallel(
         };
         env.tx.transact_to = to;
 
-        tasks.push(Task::new(env.clone(), idx, -1, SpecId::CANCUN));
+        tasks.push(Task::new(env.clone(), idx, -1, SpecId::CANCUN, NoOpInspector));
         idx += 1;
     }
 

@@ -44,7 +44,7 @@ impl Occda
     //     state.cache.clone()
     // }
 
-    pub fn init(&mut self, tasks: Vec<Task>, graph: Option<&TaskDag>) -> BinaryHeap<Reverse<SidOrderedTask>> {
+    pub fn init<I>(&mut self, tasks: Vec<Task<I>>, graph: Option<&TaskDag>) -> BinaryHeap<Reverse<SidOrderedTask<I>>> {
         let mut heap = BinaryHeap::new();
         
         for mut task in tasks {
@@ -67,23 +67,21 @@ impl Occda
 
     pub async fn main_with_db<DB: Database + DatabaseRef + DatabaseCommit + Send + Sync, I>(
         &mut self,
-        mut h_tx: BinaryHeap<Reverse<SidOrderedTask>>,
-        db: &mut DB,
-        inspector: I
+        mut h_tx: BinaryHeap<Reverse<SidOrderedTask<I>>>,
+        db: &mut DB
     ) -> Result<Vec<ResultAndState>, Box<dyn std::error::Error + Send + Sync>> 
     where
         DB: Database + DatabaseRef + DatabaseCommit + Send + Sync,
         I: GetInspector<DB> + Send + Sync,
     {
-        let mut h_ready = BinaryHeap::<Reverse<TidOrderedTask>>::new();
-        let mut h_commit = BinaryHeap::<Reverse<TidOrderedTask>>::new();
+        let mut h_ready = BinaryHeap::<Reverse<TidOrderedTask<I>>>::new();
+        let mut h_commit = BinaryHeap::<Reverse<TidOrderedTask<I>>>::new();
         let mut next = 0;
         let len = h_tx.len();
         let mut access_tracker = AccessTracker::new();
         let db_shared = Arc::new(RwLock::new(db));
 
         let mut results_states: Vec<ResultAndState> = Vec::new();
-        let inspector_arc = Arc::new(inspector);
         while next < len {
             // Schedule tasks
             while let Some(Reverse(SidOrderedTask(task))) = h_tx.pop() {
@@ -106,15 +104,15 @@ impl Occda
             let results: Vec<_> = self.thread_pool.install(|| {
                 tasks.into_par_iter()
                 .map({
-                    let inspector_arc = Arc::clone(&inspector_arc);
                     let db_shared = Arc::clone(&db_shared);
                     move |Reverse(TidOrderedTask(mut task))| {
                         let db_ref = db_shared.read();
                         
+                        let inspector = std::mem::replace(&mut task.inspector, unsafe { std::mem::zeroed() });
                         let mut evm = Evm::builder()
                             .with_ref_db(&*db_ref)
                             .modify_env(|e| e.clone_from(&task.env))
-                            .with_external_context(Arc::clone(&inspector_arc))
+                            .with_external_context(inspector)
                             .with_spec_id(task.spec_id)
                             .build();
                         
@@ -193,122 +191,6 @@ impl Occda
         }
 
         println!("finished execute tasks size: {}", results_states.len());
-        Ok(results_states)
-    }
-
-    pub async fn main_with_db_ref<DB: DatabaseRef + DatabaseCommit + Sync + 'static>(
-        &mut self,
-        mut h_tx: BinaryHeap<Reverse<SidOrderedTask>>,
-        db_mut: &mut DB
-    ) -> Result<Vec<ResultAndState>, Box<dyn std::error::Error + Send + Sync>>
-    where
-        DB: DatabaseRef + DatabaseCommit + 'static,
-     {
-        let mut h_ready = BinaryHeap::<Reverse<TidOrderedTask>>::new();
-        let mut h_commit = BinaryHeap::<Reverse<TidOrderedTask>>::new();
-        let mut next = 0;
-        let len = h_tx.len();
-        let mut access_tracker = AccessTracker::new();
-
-        let mut results_states: Vec<ResultAndState> = Vec::new();
-        while next < len {
-            while let Some(Reverse(SidOrderedTask(task))) = h_tx.pop() {
-                if task.sid <= next as i32 - 1 {
-                    h_ready.push(Reverse(TidOrderedTask(task)));
-                } else {
-                    h_tx.push(Reverse(SidOrderedTask(task)));
-                    break;
-                }
-            }
-
-            let mut tasks: Vec<_> = h_ready.drain().collect();
-            tasks.sort_by(|a, b| {
-                let Reverse(TidOrderedTask(task_a)) = a;
-                let Reverse(TidOrderedTask(task_b)) = b;
-                task_b.gas.cmp(&task_a.gas)
-            });
-            let db_ref = &*db_mut;
-            let results: Vec<_> = self.thread_pool.install(|| {
-                tasks.into_par_iter()
-                .map({
-                    move |Reverse(TidOrderedTask(mut task))| {
-
-                    let mut evm = Evm::builder()
-                            .with_ref_db(db_ref)
-                            .modify_env(|e| e.clone_from(&task.env))
-                            .with_spec_id(task.spec_id)
-                            .build();
-                        let result = evm.transact();
-                        let mut read_write_set = evm.get_read_write_set();
-                        read_write_set.add_write(task.env.tx.caller, AccessType::AccountInfo);
-                        task.read_write_set = Some(read_write_set);
-                        match result {
-                            Ok(result_and_state) => {
-                                let ResultAndState { state, result } = result_and_state;
-                                task.state = Some(state);
-                                task.result = Some(result);
-                                if task.result.as_ref().unwrap().is_success() {
-                                    "success"
-                                } else {
-                                    "revert"
-                                }
-                            },
-                            Err(_) => {
-                                task.state = None;
-                                task.gas = 0;
-                                "abort"
-                            },
-                        };
-                    task
-                }
-            })
-            .collect()});
-
-            for task in results {
-                h_commit.push(Reverse(TidOrderedTask(task)));
-            }
-
-            while let Some(Reverse(TidOrderedTask(mut task))) = h_commit.pop() {
-                if task.tid != next as i32 {
-                    h_commit.push(Reverse(TidOrderedTask(task)));
-                    break;
-                }
-
-                let conflict = access_tracker.check_conflict_in_range(
-                    &task.read_write_set.as_ref().unwrap().read_set,
-                    task.sid + 1,
-                    task.tid
-                );
-                if conflict.is_some() {
-                    task.sid = task.tid - 1;
-                    h_tx.push(Reverse(SidOrderedTask(task)));
-                } else {
-                    if task.state.is_none() {
-                        next += 1;
-                        continue;
-                    }
-                    let state_to_commit = task.state.ok_or_else(|| {
-                        eprintln!("Task state is None, returning error");
-                        Box::<dyn std::error::Error + Send + Sync>::from("Task state is None")
-                    }).unwrap();
-                    db_mut.commit(state_to_commit.clone());
-
-                    access_tracker.record_write_set(
-                        task.tid,
-                        &task.read_write_set.as_ref().unwrap().write_set
-                    );
-
-                    results_states.push(ResultAndState { 
-                        state: state_to_commit, 
-                        result: task.result.clone().unwrap() 
-                    });
-                    
-                    next += 1;
-                }
-            }
-        }
-
-        
         Ok(results_states)
     }
 
