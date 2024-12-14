@@ -69,7 +69,7 @@ impl Occda
         &mut self,
         mut h_tx: BinaryHeap<Reverse<SidOrderedTask<I>>>,
         db: &mut DB
-    ) -> Result<Vec<ResultAndState>, Box<dyn std::error::Error + Send + Sync>> 
+    ) -> Result<Vec<Task<I>>, Box<dyn std::error::Error + Send + Sync>> 
     where
         DB: Database + DatabaseRef + DatabaseCommit + Send + Sync,
         I: GetInspector<DB> + Send + Sync,
@@ -81,7 +81,7 @@ impl Occda
         let mut access_tracker = AccessTracker::new();
         let db_shared = Arc::new(RwLock::new(db));
 
-        let mut results_states: Vec<ResultAndState> = Vec::new();
+        let mut task_list: Vec<Task<I>> = Vec::new();
         while next < len {
             // Schedule tasks
             while let Some(Reverse(SidOrderedTask(task))) = h_tx.pop() {
@@ -147,9 +147,13 @@ impl Occda
                 .collect()
             });
 
+            // task_list.extend(results);
+            // task_list.extend(results.iter().map(|t| t.clone()));
             for task in results {
                 h_commit.push(Reverse(TidOrderedTask(task)));
             }
+
+            // 
             // Commit tasks
             // Commit or abort tasks
             while let Some(Reverse(TidOrderedTask(mut task))) = h_commit.pop() {
@@ -168,30 +172,26 @@ impl Occda
                     task.sid = task.tid - 1;
                     h_tx.push(Reverse(SidOrderedTask(task)));
                 } else {
-                    let state_to_commit = task.state.ok_or_else(|| {
+                    let state_to_commit = task.state.clone().ok_or_else(|| {
                         eprintln!("Task state is None, returning error");
                         Box::<dyn std::error::Error + Send + Sync>::from("Task state is None")
                     }).unwrap();
 
                     db_shared.write().commit(state_to_commit.clone());
-
-                    results_states.push(ResultAndState { 
-                        state: state_to_commit, 
-                        result: task.result.clone().unwrap() 
-                    });
                     
                     access_tracker.record_write_set(
                         task.tid,
                         &task.read_write_set.as_ref().unwrap().write_set
                     );
+                    task_list.push(task);
                     next += 1;
                 }
 
             }
         }
 
-        println!("finished execute tasks size: {}", results_states.len());
-        Ok(results_states)
+        println!("finished execute tasks size: {}", task_list.len());
+        Ok(task_list)
     }
 
 }
