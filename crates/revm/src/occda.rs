@@ -73,7 +73,7 @@ impl Occda
     ) -> Result<Vec<ResultAndState>, Box<dyn std::error::Error + Send + Sync>> 
     where
         DB: Database + DatabaseRef + DatabaseCommit + Send + Sync,
-        I: GetInspector<DB> + Send + Sync + 'static,
+        I: GetInspector<DB> + Send + Sync,
     {
         let mut h_ready = BinaryHeap::<Reverse<TidOrderedTask>>::new();
         let mut h_commit = BinaryHeap::<Reverse<TidOrderedTask>>::new();
