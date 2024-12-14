@@ -12,7 +12,6 @@ use std::sync::Arc;
 use rayon::ThreadPool;
 use rayon::prelude::*;
 use parking_lot::RwLock;
-use std::mem::MaybeUninit;
 
 pub struct Occda {
     _dag: TaskDag,
@@ -108,44 +107,39 @@ impl Occda
                     let db_shared = Arc::clone(&db_shared);
                     move |Reverse(TidOrderedTask(mut task))| {
                         let db_ref = db_shared.read();
-                        
-                        let inspector = unsafe {
-                            std::mem::replace(
-                                &mut task.inspector,
-                                MaybeUninit::uninit().assume_init()
-                            )
-                        };
-                        let mut evm = Evm::builder()
-                            .with_ref_db(&*db_ref)
-                            .modify_env(|e| e.clone_from(&task.env))
-                            .with_external_context(inspector)
-                            .with_spec_id(task.spec_id)
-                            .build();
-                        
-                        let result = evm.transact();
+                        {
+                            let mut evm = Evm::builder()
+                                .with_ref_db(&*db_ref)
+                                .modify_env(|e| e.clone_from(&task.env))
+                                .with_external_context(&task.inspector)
+                                .with_spec_id(task.spec_id)
+                                .build();
+                            
+                            let result = evm.transact();
 
-                        let mut read_write_set = evm.get_read_write_set();
-                        read_write_set.add_write(task.env.tx.caller, AccessType::AccountInfo);
-                        task.read_write_set = Some(read_write_set);
+                            let mut read_write_set = evm.get_read_write_set();
+                            read_write_set.add_write(task.env.tx.caller, AccessType::AccountInfo);
+                            task.read_write_set = Some(read_write_set);
 
-                        match result {
-                            Ok(result_and_state) => {
-                                let ResultAndState { state, result } = result_and_state;
-                                task.state = Some(state);
-                                task.result = Some(result);
-                                if task.result.as_ref().unwrap().is_success() {
-                                    "success"
-                                } else {
-                                    "revert"
-                                }
-                            },
-                            Err(_) => {
-                                task.state = None;
-                                task.gas = 0;
-                                "abort"
-                            },
-                        };
-                    
+                            match result {
+                                Ok(result_and_state) => {
+                                    let ResultAndState { state, result } = result_and_state;
+                                    task.state = Some(state);
+                                    task.result = Some(result);
+                                    if task.result.as_ref().unwrap().is_success() {
+                                        "success"
+                                    } else {
+                                        "revert"
+                                    }
+                                },
+                                Err(_) => {
+                                    task.state = None;
+                                    task.gas = 0;
+                                    "abort"
+                                },
+                            };
+                        } 
+                        
 
                         task
                     }
