@@ -111,7 +111,7 @@ impl Occda
                             let mut evm = Evm::builder()
                                 .with_ref_db(&*db_ref)
                                 .modify_env(|e| e.clone_from(&task.env))
-                                .with_external_context(&task.inspector)
+                                .with_external_context(&mut task.inspector)
                                 .with_spec_id(task.spec_id)
                                 .build();
                             
