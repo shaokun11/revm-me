@@ -1,6 +1,6 @@
 use std::collections::BinaryHeap;
 use std::cmp::Reverse;
-use crate::primitives::{ResultAndState, SpecId};
+use crate::primitives::ResultAndState;
 use crate::access_tracker::AccessTracker;
 use crate::journaled_state::AccessType;
 use crate::task::{SidOrderedTask, Task, TidOrderedTask};
@@ -65,14 +65,14 @@ impl Occda
         heap
     }
 
-    pub async fn main_with_db<DB: Database + DatabaseRef + DatabaseCommit + Send + Sync + 'static, I>(
+    pub async fn main_with_db<DB: Database + DatabaseRef + DatabaseCommit + Send + Sync, I>(
         &mut self,
         mut h_tx: BinaryHeap<Reverse<SidOrderedTask>>,
         db: &mut DB,
         inspector: I
     ) -> Result<Vec<ResultAndState>, Box<dyn std::error::Error + Send + Sync>> 
     where
-        DB: Database + DatabaseRef + DatabaseCommit + Send + Sync + 'static,
+        DB: Database + DatabaseRef + DatabaseCommit + Send + Sync,
         I: GetInspector<DB> + Send + Sync + 'static,
     {
         let mut h_ready = BinaryHeap::<Reverse<TidOrderedTask>>::new();
