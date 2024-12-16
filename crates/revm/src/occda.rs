@@ -91,7 +91,7 @@ impl Occda
     where
         DB: DatabaseRef + Database + DatabaseCommit + Send + Sync,
         I: Send + Sync + for<'db> GetInspector<WrapDatabaseRef<&'db DB>>,
-        Setup: Fn() -> I + Send + Sync + 'static + Clone,
+        Setup: Fn() -> I + Send + Sync + Clone,
     {
         let mut h_ready = BinaryHeap::<Reverse<TidOrderedTask>>::new();
         let mut h_commit = BinaryHeap::<Reverse<TidOrderedTask>>::new();
