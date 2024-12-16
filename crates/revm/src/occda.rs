@@ -82,10 +82,10 @@ impl Occda
                 .build()
         }
 
-    pub async fn main_with_db<'a, DB: DatabaseRef + Database + DatabaseCommit + Send + Sync, I, Setup>(
+    pub async fn main_with_db<DB: DatabaseRef + Database + DatabaseCommit + Send + Sync, I, Setup>(
         &mut self,
         mut h_tx: BinaryHeap<Reverse<SidOrderedTask>>,
-        db: &'a mut DB,
+        db: Arc<RwLock<DB>>,
         inspector_setup: Setup
     ) -> Result<Vec<Task>, Box<dyn std::error::Error + Send + Sync>> 
     where
@@ -98,7 +98,6 @@ impl Occda
         let mut next = 0;
         let len = h_tx.len();
         let mut access_tracker = AccessTracker::new();
-        let db_shared = Arc::new(RwLock::new(db));
 
         let mut task_list: Vec<Task> = Vec::new();
         while next < len {
@@ -121,11 +120,12 @@ impl Occda
             });
 
             let this = &*self;
+            let db_shared = Arc::clone(&db);
             let results: Vec<_> = self.thread_pool.install(|| {
                 tasks.into_par_iter()
                 .map({
-                    let db_shared = Arc::clone(&db_shared);
                     let this = this;
+                    let db_shared = Arc::clone(&db_shared);
                     let inspector_setup = inspector_setup.clone();
                     move |Reverse(TidOrderedTask(mut task))| {
                         let db_ref = db_shared.read();
@@ -195,7 +195,7 @@ impl Occda
                         Box::<dyn std::error::Error + Send + Sync>::from("Task state is None")
                     }).unwrap();
 
-                    db_shared.write().commit(state_to_commit.clone());
+                    db.write().commit(state_to_commit.clone());
                     
 
                     access_tracker.record_write_set(

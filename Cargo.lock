@@ -3496,6 +3496,7 @@ dependencies = [
  "indicatif",
  "k256",
  "microbench",
+ "parking_lot",
  "plain_hasher",
  "revm",
  "serde",

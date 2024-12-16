@@ -27,3 +27,4 @@ triehash = "0.8"
 walkdir = "2.5"
 k256 = { version = "0.13.3", features = ["ecdsa"] }
 tokio = { version = "1.39.0", features = ["full"] }
+parking_lot = "0.12"

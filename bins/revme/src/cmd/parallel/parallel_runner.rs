@@ -24,6 +24,8 @@ use std::{
 
 use thiserror::Error;
 use tokio::runtime::Runtime;
+use parking_lot::RwLock;
+use std::sync::Arc;
 
 #[derive(Debug, Error)]
 #[error("Test {name} failed: {kind}")]
@@ -212,7 +214,7 @@ pub fn run_parallel(
     let mut cache = cache_state.clone();
         cache.set_state_clear_flag(SpecId::enabled(SpecId::CANCUN, SpecId::SPURIOUS_DRAGON));
 
-    let mut state = State::builder()
+    let state = State::builder()
             .with_cached_prestate(cache)
             .with_bundle_update()
             .build();
@@ -289,12 +291,14 @@ pub fn run_parallel(
     })?;
     rt.block_on(async {
         let timer = Instant::now();
-        let _ = occda.main_with_db(h_tx, &mut state, || NoOpInspector).await;
+        let state_arc = Arc::new(RwLock::new(state));
+        let _ = occda.main_with_db(h_tx, state_arc.clone(), || NoOpInspector).await;
         let elapsed = timer.elapsed();
         profiler::dump_json("./profiler_output.json");
         println!("Execution time: {:?}", elapsed);
+        let state_read = state_arc.read();
         // println!("trie_account: {:#?}", state.cache);
-        println!("\nState root: {:#?}", state_merkle_trie_root(state.cache.trie_account()));
+        println!("\nState root: {:#?}", state_merkle_trie_root(state_read.cache.trie_account()));
     });
 
     Ok(())
