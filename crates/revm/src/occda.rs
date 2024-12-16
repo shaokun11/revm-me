@@ -1,4 +1,3 @@
-use core::sync;
 use std::collections::BinaryHeap;
 use std::cmp::Reverse;
 use crate::primitives::{ResultAndState, SpecId, Env};
@@ -48,7 +47,7 @@ impl Occda
     //     state.cache.clone()
     // }
 
-    pub fn init<I>(&mut self, tasks: Vec<Task<I>>, graph: Option<&TaskDag>) -> BinaryHeap<Reverse<SidOrderedTask<I>>> {
+    pub fn init(&mut self, tasks: Vec<Task>, graph: Option<&TaskDag>) -> BinaryHeap<Reverse<SidOrderedTask>> {
         let mut heap = BinaryHeap::new();
         
         for mut task in tasks {
@@ -85,23 +84,23 @@ impl Occda
 
     pub async fn main_with_db<'a, DB: DatabaseRef + Database + DatabaseCommit + Send + Sync, I, Setup>(
         &mut self,
-        mut h_tx: BinaryHeap<Reverse<SidOrderedTask<I>>>,
+        mut h_tx: BinaryHeap<Reverse<SidOrderedTask>>,
         db: &'a mut DB,
         inspector_setup: Setup
-    ) -> Result<Vec<Task<I>>, Box<dyn std::error::Error + Send + Sync>> 
+    ) -> Result<Vec<Task>, Box<dyn std::error::Error + Send + Sync>> 
     where
         DB: DatabaseRef + Database + DatabaseCommit + Send + Sync,
         I: Send + Sync + for<'db> GetInspector<WrapDatabaseRef<&'db DB>>,
         Setup: Fn() -> I + Send + Sync + 'static + Clone,
     {
-        let mut h_ready = BinaryHeap::<Reverse<TidOrderedTask<I>>>::new();
-        let mut h_commit = BinaryHeap::<Reverse<TidOrderedTask<I>>>::new();
+        let mut h_ready = BinaryHeap::<Reverse<TidOrderedTask>>::new();
+        let mut h_commit = BinaryHeap::<Reverse<TidOrderedTask>>::new();
         let mut next = 0;
         let len = h_tx.len();
         let mut access_tracker = AccessTracker::new();
         let db_shared = Arc::new(RwLock::new(db));
 
-        let mut task_list: Vec<Task<I>> = Vec::new();
+        let mut task_list: Vec<Task> = Vec::new();
         while next < len {
             // Schedule tasks
             while let Some(Reverse(SidOrderedTask(task))) = h_tx.pop() {

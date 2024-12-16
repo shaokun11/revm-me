@@ -15,13 +15,13 @@ impl TaskDag {
         }
     }
 
-    pub fn add_task<I>(&mut self, task: &Task<I>) -> NodeIndex {
+    pub fn add_task(&mut self, task: &Task) -> NodeIndex {
         let node = self.dag.add_node(());
         self.task_to_node.insert(task.tid, node);
         node
     }
 
-    pub fn add_dependency<I>(&mut self, dependent: &Task<I>, dependency: &Task<I>) {
+    pub fn add_dependency(&mut self, dependent: &Task, dependency: &Task) {
         if let (Some(&dep_node), Some(&task_node)) = (
             self.task_to_node.get(&dependency.tid),
             self.task_to_node.get(&dependent.tid),
@@ -30,7 +30,7 @@ impl TaskDag {
         }
     }
 
-    pub fn get_dependencies<I>(&self, task: &Task<I>) -> Vec<NodeIndex> {
+    pub fn get_dependencies(&self, task: &Task) -> Vec<NodeIndex> {
         if let Some(&node) = self.task_to_node.get(&task.tid) {
             self.dag.parents(node).iter(&self.dag).map(|(_, n)| n).collect()
         } else {

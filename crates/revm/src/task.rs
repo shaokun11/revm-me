@@ -3,7 +3,7 @@ use crate::journaled_state::ReadWriteSet;
 use std::cmp::Ordering;
 
 #[derive(Clone)]
-pub struct Task<I> {
+pub struct Task {
     pub env: Box<Env>,
     pub spec_id: SpecId,
     pub read_write_set: Option<ReadWriteSet>,
@@ -11,12 +11,11 @@ pub struct Task<I> {
     pub sid: i32,
     pub gas: u64,
     pub state: Option<EvmState>,
-    pub result: Option<ExecutionResult>,
-    pub inspector: I,
+    pub result: Option<ExecutionResult>,    
 }
 
-impl<I> Task<I> {
-    pub fn new(env: Box<Env>, tid: i32, sid: i32, spec_id: SpecId, inspector: I) -> Self {
+impl Task {
+    pub fn new(env: Box<Env>, tid: i32, sid: i32, spec_id: SpecId) -> Self {
         Task {
             gas: env.tx.gas_limit,
             read_write_set: None,
@@ -25,74 +24,73 @@ impl<I> Task<I> {
             env,
             spec_id,
             state: None,
-            result: None,
-            inspector,
+            result: None
         }
     }
 }
 
-pub struct SidOrderedTask<I>(pub Task<I>);
-pub struct TidOrderedTask<I>(pub Task<I>);
-pub struct GasOrderedTask<I>(pub Task<I>);
+pub struct SidOrderedTask(pub Task);
+pub struct TidOrderedTask(pub Task);
+pub struct GasOrderedTask(pub Task);
 
-impl<I> Ord for SidOrderedTask<I> {
+impl Ord for SidOrderedTask {
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.sid.cmp(&other.0.sid)
             .then_with(|| self.0.tid.cmp(&other.0.tid))
     }
 }
 
-impl<I> PartialOrd for SidOrderedTask<I> {
+impl PartialOrd for SidOrderedTask {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<I> PartialEq for SidOrderedTask<I> {
+impl PartialEq for SidOrderedTask {
     fn eq(&self, other: &Self) -> bool {
         self.0.sid == other.0.sid && self.0.tid == other.0.tid
     }
 }
 
-impl<I> Eq for SidOrderedTask<I> {}
+impl Eq for SidOrderedTask {}
 
-impl<I> Ord for TidOrderedTask<I> {
+impl Ord for TidOrderedTask {
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.tid.cmp(&other.0.tid)
     }
 }
 
-impl<I> PartialOrd for TidOrderedTask<I> {
+impl PartialOrd for TidOrderedTask {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<I> PartialEq for TidOrderedTask<I> {
+impl PartialEq for TidOrderedTask {
     fn eq(&self, other: &Self) -> bool {
         self.0.tid == other.0.tid
     }
 }
 
-impl<I> Eq for TidOrderedTask<I> {}
+impl Eq for TidOrderedTask {}
 
-impl<I> Ord for GasOrderedTask<I> {
+impl Ord for GasOrderedTask {
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.gas.cmp(&other.0.gas)
             .then_with(|| self.0.tid.cmp(&other.0.tid))
     }
 }
 
-impl<I> PartialOrd for GasOrderedTask<I> {
+impl PartialOrd for GasOrderedTask {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<I> PartialEq for GasOrderedTask<I> {
+impl PartialEq for GasOrderedTask {
     fn eq(&self, other: &Self) -> bool {
         self.0.gas == other.0.gas && self.0.tid == other.0.tid
     }
 }
 
-impl<I> Eq for GasOrderedTask<I> {}
+impl Eq for GasOrderedTask {}
