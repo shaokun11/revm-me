@@ -1,17 +1,21 @@
+use core::sync;
 use std::collections::BinaryHeap;
 use std::cmp::Reverse;
-use crate::primitives::ResultAndState;
+use crate::primitives::{ResultAndState, SpecId, Env};
 use crate::access_tracker::AccessTracker;
 use crate::journaled_state::AccessType;
 use crate::task::{SidOrderedTask, Task, TidOrderedTask};
 use crate::dag::TaskDag;
 use crate::evm::Evm;
-use crate::db::{DatabaseCommit, Database, DatabaseRef};
+use crate::db::{Database, DatabaseCommit, DatabaseRef, WrapDatabaseRef};
 use crate::inspector::GetInspector;
+use crate::inspector_handle_register;
+use crate::handler::register::HandleRegister;
 use std::sync::Arc;
 use rayon::ThreadPool;
 use rayon::prelude::*;
 use parking_lot::RwLock;
+
 
 pub struct Occda {
     _dag: TaskDag,
@@ -65,14 +69,30 @@ impl Occda
         heap
     }
 
-    pub async fn main_with_db<DB: Database + DatabaseRef + DatabaseCommit + Send + Sync, I>(
+    fn build_evm<'a, DB, I>(&self, db: &'a DB, inspector: I, spec_id: SpecId, e: &Box<Env>
+    , register_handles_fn: HandleRegister<I, WrapDatabaseRef<&'a DB>>) -> Evm<'a, I, WrapDatabaseRef<&'a DB>>
+        where
+            DB: Database + DatabaseRef,
+        {
+            Evm::builder()
+                .with_ref_db(db)
+                .modify_env(|env| env.clone_from(e))
+                .with_external_context(inspector)
+                .with_spec_id(spec_id)
+                .append_handler_register(register_handles_fn)
+                .build()
+        }
+
+    pub async fn main_with_db<'a, DB: DatabaseRef + Database + DatabaseCommit + Send + Sync, I, Setup>(
         &mut self,
         mut h_tx: BinaryHeap<Reverse<SidOrderedTask<I>>>,
-        db: &mut DB
+        db: &'a mut DB,
+        inspector_setup: Setup
     ) -> Result<Vec<Task<I>>, Box<dyn std::error::Error + Send + Sync>> 
     where
-        DB: Database + DatabaseRef + DatabaseCommit + Send + Sync,
-        I: GetInspector<DB> + Send + Sync,
+        DB: DatabaseRef + Database + DatabaseCommit + Send + Sync,
+        I: Send + Sync + for<'db> GetInspector<WrapDatabaseRef<&'db DB>>,
+        Setup: Fn() -> I + Send + Sync + 'static + Clone,
     {
         let mut h_ready = BinaryHeap::<Reverse<TidOrderedTask<I>>>::new();
         let mut h_commit = BinaryHeap::<Reverse<TidOrderedTask<I>>>::new();
@@ -101,20 +121,19 @@ impl Occda
                 task_b.gas.cmp(&task_a.gas)
             });
 
+            let this = &*self;
             let results: Vec<_> = self.thread_pool.install(|| {
                 tasks.into_par_iter()
                 .map({
                     let db_shared = Arc::clone(&db_shared);
+                    let this = this;
+                    let inspector_setup = inspector_setup.clone();
                     move |Reverse(TidOrderedTask(mut task))| {
                         let db_ref = db_shared.read();
                         {
-                            let mut evm = Evm::builder()
-                                .with_ref_db(&*db_ref)
-                                .modify_env(|e| e.clone_from(&task.env))
-                                .with_external_context(&mut task.inspector)
-                                .with_spec_id(task.spec_id)
-                                .build();
-                            
+                            let db_ref_mut: &DB = &*db_ref;
+                            let mut evm = this.build_evm(db_ref_mut, inspector_setup(), task.spec_id, &task.env, inspector_handle_register);
+
                             let result = evm.transact();
 
                             let mut read_write_set = evm.get_read_write_set();
@@ -179,6 +198,7 @@ impl Occda
 
                     db_shared.write().commit(state_to_commit.clone());
                     
+
                     access_tracker.record_write_set(
                         task.tid,
                         &task.read_write_set.as_ref().unwrap().write_set

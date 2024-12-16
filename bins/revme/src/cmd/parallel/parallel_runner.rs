@@ -289,7 +289,7 @@ pub fn run_parallel(
     })?;
     rt.block_on(async {
         let timer = Instant::now();
-        let _ = occda.main_with_db(h_tx, &mut state).await;
+        let _ = occda.main_with_db(h_tx, &mut state, || NoOpInspector).await;
         let elapsed = timer.elapsed();
         profiler::dump_json("./profiler_output.json");
         println!("Execution time: {:?}", elapsed);
