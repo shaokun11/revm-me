@@ -82,16 +82,15 @@ impl Occda
                 .build()
         }
 
-    pub async fn main_with_db<DB: DatabaseRef + Database + DatabaseCommit + Send + Sync, I, Setup>(
+    pub async fn main_with_db<DB: DatabaseRef + Database + DatabaseCommit + Send + Sync, I>(
         &mut self,
         mut h_tx: BinaryHeap<Reverse<SidOrderedTask>>,
         db: Arc<RwLock<DB>>,
-        inspector_setup: Setup
+        inspector: Arc<I>
     ) -> Result<Vec<Task>, Box<dyn std::error::Error + Send + Sync>> 
     where
         DB: DatabaseRef + Database + DatabaseCommit + Send + Sync,
-        I: Send + Sync + for<'db> GetInspector<WrapDatabaseRef<&'db DB>>,
-        Setup: Fn() -> I + Send + Sync + Clone,
+        I: Send + Sync + Clone + for<'db> GetInspector<WrapDatabaseRef<&'db DB>>,
     {
         let mut h_ready = BinaryHeap::<Reverse<TidOrderedTask>>::new();
         let mut h_commit = BinaryHeap::<Reverse<TidOrderedTask>>::new();
@@ -121,17 +120,18 @@ impl Occda
 
             let this = &*self;
             let db_shared = Arc::clone(&db);
+            let inspector_shared = Arc::clone(&inspector);
             let results: Vec<_> = self.thread_pool.install(|| {
                 tasks.into_par_iter()
                 .map({
                     let this = this;
                     let db_shared = Arc::clone(&db_shared);
-                    let inspector_setup = inspector_setup.clone();
                     move |Reverse(TidOrderedTask(mut task))| {
                         let db_ref = db_shared.read();
                         {
+                            let inspector = Arc::clone(&inspector_shared);
                             let db_ref_mut: &DB = &*db_ref;
-                            let mut evm = this.build_evm(db_ref_mut, inspector_setup(), task.spec_id, &task.env, inspector_handle_register);
+                            let mut evm = this.build_evm(db_ref_mut, (*inspector).clone(), task.spec_id, &task.env, inspector_handle_register);
 
                             let result = evm.transact();
 

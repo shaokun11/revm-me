@@ -292,7 +292,7 @@ pub fn run_parallel(
     rt.block_on(async {
         let timer = Instant::now();
         let state_arc = Arc::new(RwLock::new(state));
-        let _ = occda.main_with_db(h_tx, state_arc.clone(), || NoOpInspector).await;
+        let _ = occda.main_with_db(h_tx, state_arc.clone(), Arc::new(NoOpInspector)).await;
         let elapsed = timer.elapsed();
         profiler::dump_json("./profiler_output.json");
         println!("Execution time: {:?}", elapsed);
