@@ -91,6 +91,8 @@ impl Occda
         DB: DatabaseRef + Database + DatabaseCommit + Send + Sync,
         I: Send + Sync + Clone + for<'db> GetInspector<WrapDatabaseRef<&'db DB>>,
     {
+        let tx_size = h_tx.len();
+        let mut exec_size = 0;
         let mut h_ready = BinaryHeap::<Reverse<TidOrderedTask<I>>>::new();
         let mut h_commit = BinaryHeap::<Reverse<TidOrderedTask<I>>>::new();
         let mut next = 0;
@@ -116,6 +118,7 @@ impl Occda
                 let Reverse(TidOrderedTask(task_b)) = b;
                 task_b.gas.cmp(&task_a.gas)
             });
+            exec_size += tasks.len();
 
             let this = &*self;
             let db_shared = Arc::clone(&db);
@@ -208,7 +211,7 @@ impl Occda
             }
         }
 
-        println!("finished execute tasks size: {}", task_list.len());
+        println!("finished execute tasks size: {} with conflict rate: {:.2}", task_list.len(), (exec_size - tx_size) / tx_size);
         Ok(task_list)
     }
 
