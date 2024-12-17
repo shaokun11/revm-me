@@ -211,7 +211,12 @@ impl Occda
             }
         }
 
-        println!("finished execute tasks size: {} with conflict rate: {:.2}", task_list.len(), (exec_size - tx_size) / tx_size);
+        let conflict_rate = ((exec_size - tx_size) as f64) / (tx_size as f64) * 100.0;
+        println!(
+            "finished execute tasks size: {} with conflict rate: {:.2}%", 
+            task_list.len(), 
+            conflict_rate
+        );
         Ok(task_list)
     }
 
