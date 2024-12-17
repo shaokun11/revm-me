@@ -238,7 +238,7 @@ pub fn run_parallel(
     // TODO: commented out, need to fix
     let mut occda = Occda::new( num_of_threads);
 
-    let mut tasks: Vec<Task> = vec![];
+    let mut tasks: Vec<Task<_>> = vec![];
     let mut idx = 0;
     // post and execution
 
@@ -278,7 +278,8 @@ pub fn run_parallel(
         };
         env.tx.transact_to = to;
 
-        tasks.push(Task::new(env.clone(), idx, -1, SpecId::CANCUN));
+        let inspector = NoOpInspector;
+        tasks.push(Task::new(env.clone(), idx, -1, SpecId::CANCUN, Some(inspector)));
         idx += 1;
     }
 
@@ -292,7 +293,7 @@ pub fn run_parallel(
     rt.block_on(async {
         let timer = Instant::now();
         let state_arc = Arc::new(RwLock::new(state));
-        let _ = occda.main_with_db(h_tx, state_arc.clone(), Arc::new(NoOpInspector)).await;
+        let _ = occda.main_with_db(h_tx, state_arc.clone()).await;
         let elapsed = timer.elapsed();
         profiler::dump_json("./profiler_output.json");
         println!("Execution time: {:?}", elapsed);

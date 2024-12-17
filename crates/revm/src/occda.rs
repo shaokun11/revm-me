@@ -47,7 +47,7 @@ impl Occda
     //     state.cache.clone()
     // }
 
-    pub fn init(&mut self, tasks: Vec<Task>, graph: Option<&TaskDag>) -> BinaryHeap<Reverse<SidOrderedTask>> {
+    pub fn init<I>(&mut self, tasks: Vec<Task<I>>, graph: Option<&TaskDag>) -> BinaryHeap<Reverse<SidOrderedTask<I>>> {
         let mut heap = BinaryHeap::new();
         
         for mut task in tasks {
@@ -84,21 +84,20 @@ impl Occda
 
     pub async fn main_with_db<DB: DatabaseRef + Database + DatabaseCommit + Send + Sync, I>(
         &mut self,
-        mut h_tx: BinaryHeap<Reverse<SidOrderedTask>>,
-        db: Arc<RwLock<DB>>,
-        inspector: Arc<I>
-    ) -> Result<Vec<Task>, Box<dyn std::error::Error + Send + Sync>> 
+        mut h_tx: BinaryHeap<Reverse<SidOrderedTask<I>>>,
+        db: Arc<RwLock<DB>>
+    ) -> Result<Vec<Task<I>>, Box<dyn std::error::Error + Send + Sync>> 
     where
         DB: DatabaseRef + Database + DatabaseCommit + Send + Sync,
         I: Send + Sync + Clone + for<'db> GetInspector<WrapDatabaseRef<&'db DB>>,
     {
-        let mut h_ready = BinaryHeap::<Reverse<TidOrderedTask>>::new();
-        let mut h_commit = BinaryHeap::<Reverse<TidOrderedTask>>::new();
+        let mut h_ready = BinaryHeap::<Reverse<TidOrderedTask<I>>>::new();
+        let mut h_commit = BinaryHeap::<Reverse<TidOrderedTask<I>>>::new();
         let mut next = 0;
         let len = h_tx.len();
         let mut access_tracker = AccessTracker::new();
 
-        let mut task_list: Vec<Task> = Vec::new();
+        let mut task_list: Vec<Task<I>> = Vec::new();
         while next < len {
             // Schedule tasks
             while let Some(Reverse(SidOrderedTask(task))) = h_tx.pop() {
@@ -120,7 +119,6 @@ impl Occda
 
             let this = &*self;
             let db_shared = Arc::clone(&db);
-            let inspector_shared = Arc::clone(&inspector);
             let results: Vec<_> = self.thread_pool.install(|| {
                 tasks.into_par_iter()
                 .map({
@@ -129,11 +127,12 @@ impl Occda
                     move |Reverse(TidOrderedTask(mut task))| {
                         let db_ref = db_shared.read();
                         {
-                            let inspector = Arc::clone(&inspector_shared);
+                            let inspector = task.inspector.take().unwrap();
                             let db_ref_mut: &DB = &*db_ref;
-                            let mut evm = this.build_evm(db_ref_mut, (*inspector).clone(), task.spec_id, &task.env, inspector_handle_register);
+                            let mut evm = this.build_evm(db_ref_mut, inspector, task.spec_id, &task.env, inspector_handle_register);
 
                             let result = evm.transact();
+                            task.inspector = Some(evm.context.external.clone());
 
                             let mut read_write_set = evm.get_read_write_set();
                             read_write_set.add_write(task.env.tx.caller, AccessType::AccountInfo);
