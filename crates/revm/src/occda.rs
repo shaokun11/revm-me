@@ -29,12 +29,6 @@ impl Occda
             // .stack_size(8 * 1024 * 1024) 
             .build()
             .unwrap();
-
-        thread_pool.install(|| {
-            (0..num_threads).into_par_iter().for_each(|_| {
-                std::thread::sleep(std::time::Duration::from_millis(1));
-            });
-        });
         
         Occda {
             _dag: TaskDag::new(),
@@ -122,7 +116,7 @@ impl Occda
 
             let this = &*self;
             let db_shared = Arc::clone(&db);
-            let results: Vec<_> = if tasks.len() == 0 {
+            let results: Vec<_> = if tasks.len() == 1 {
                 let Reverse(TidOrderedTask(mut task)) = tasks.pop().unwrap();
                 let db_ref = db.read();
                 let db_ref_mut: &DB = &*db_ref;
