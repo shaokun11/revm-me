@@ -148,10 +148,10 @@ impl Occda
                         task.gas = 0;
                     },
                 };
-                // task.inspector = Some(evm.context.external.clone());
-                // let mut read_write_set = evm.get_read_write_set();
-                // read_write_set.add_write(task.env.tx.caller, AccessType::AccountInfo);
-                // task.read_write_set = Some(read_write_set);
+                task.inspector = Some(evm.context.external.clone());
+                let mut read_write_set = evm.get_read_write_set();
+                read_write_set.add_write(task.env.tx.caller, AccessType::AccountInfo);
+                task.read_write_set = Some(read_write_set);
                 
                 vec![task]
             } else {
