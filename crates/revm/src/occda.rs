@@ -122,50 +122,84 @@ impl Occda
 
             let this = &*self;
             let db_shared = Arc::clone(&db);
-            let results: Vec<_> = self.thread_pool.install(|| {
-                tasks.into_par_iter()
-                .map({
-                    let this = this;
-                    let db_shared = Arc::clone(&db_shared);
-                    move |Reverse(TidOrderedTask(mut task))| {
-                        let db_ref = db_shared.read();
-                        {
-                            let inspector = task.inspector.take().unwrap();
-                            let db_ref_mut: &DB = &*db_ref;
-                            let mut evm = this.build_evm(db_ref_mut, inspector, task.spec_id, &task.env, inspector_handle_register);
-
-                            let result = evm.transact();
-                            task.inspector = Some(evm.context.external.clone());
-
-                            let mut read_write_set = evm.get_read_write_set();
-                            read_write_set.add_write(task.env.tx.caller, AccessType::AccountInfo);
-                            task.read_write_set = Some(read_write_set);
-
-                            match result {
-                                Ok(result_and_state) => {
-                                    let ResultAndState { state, result } = result_and_state;
-                                    task.state = Some(state);
-                                    task.result = Some(result);
-                                    if task.result.as_ref().unwrap().is_success() {
-                                        "success"
-                                    } else {
-                                        "revert"
-                                    }
-                                },
-                                Err(_) => {
-                                    task.state = None;
-                                    task.gas = 0;
-                                    "abort"
-                                },
-                            };
-                        } 
-                        
-
-                        task
-                    }
+            let results: Vec<_> = if tasks.len() == 0 {
+                let Reverse(TidOrderedTask(mut task)) = tasks.pop().unwrap();
+                let db_ref = db.read();
+                let db_ref_mut: &DB = &*db_ref;
+                
+                let inspector = task.inspector.take().unwrap();
+                let mut evm = this.build_evm(
+                    db_ref_mut,
+                    inspector,
+                    task.spec_id,
+                    &task.env,
+                    inspector_handle_register,
+                );
+            
+                let result = evm.transact();
+                match result {
+                    Ok(result_and_state) => {
+                        let ResultAndState { state, result } = result_and_state;
+                        task.state = Some(state);
+                        task.result = Some(result);
+                    },
+                    Err(_) => {
+                        task.state = None;
+                        task.gas = 0;
+                    },
+                };
+                // task.inspector = Some(evm.context.external.clone());
+                // let mut read_write_set = evm.get_read_write_set();
+                // read_write_set.add_write(task.env.tx.caller, AccessType::AccountInfo);
+                // task.read_write_set = Some(read_write_set);
+                
+                vec![task]
+            } else {
+                self.thread_pool.install(|| {
+                    tasks.into_par_iter()
+                    .map({
+                        let this = this;
+                        let db_shared = Arc::clone(&db_shared);
+                        move |Reverse(TidOrderedTask(mut task))| {
+                            let db_ref = db_shared.read();
+                            {
+                                let inspector = task.inspector.take().unwrap();
+                                let db_ref_mut: &DB = &*db_ref;
+                                let mut evm = this.build_evm(db_ref_mut, inspector, task.spec_id, &task.env, inspector_handle_register);
+    
+                                let result = evm.transact();
+                                task.inspector = Some(evm.context.external.clone());
+    
+                                let mut read_write_set = evm.get_read_write_set();
+                                read_write_set.add_write(task.env.tx.caller, AccessType::AccountInfo);
+                                task.read_write_set = Some(read_write_set);
+    
+                                match result {
+                                    Ok(result_and_state) => {
+                                        let ResultAndState { state, result } = result_and_state;
+                                        task.state = Some(state);
+                                        task.result = Some(result);
+                                        if task.result.as_ref().unwrap().is_success() {
+                                            "success"
+                                        } else {
+                                            "revert"
+                                        }
+                                    },
+                                    Err(_) => {
+                                        task.state = None;
+                                        task.gas = 0;
+                                        "abort"
+                                    },
+                                };
+                            } 
+                            
+    
+                            task
+                        }
+                    })
+                    .collect()
                 })
-                .collect()
-            });
+            };
 
             // task_list.extend(results);
             // task_list.extend(results.iter().map(|t| t.clone()));

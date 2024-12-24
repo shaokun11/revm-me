@@ -13,6 +13,7 @@ use revm::{
     inspectors::NoOpInspector,
     primitives::{keccak256, Bytes, TxKind, B256, Bytecode, SpecId, AccountInfo, Env},
     profiler,
+    inspector_handle_register,
     Evm
 };
 
@@ -156,6 +157,8 @@ pub fn run_sequential(
         .with_db(&mut state)
         .modify_env(|e| e.clone_from(&env))
         .with_spec_id(SpecId::CANCUN)
+        .with_external_context(NoOpInspector)
+        .append_handler_register(inspector_handle_register)
         .build();
         description.insert("evm_build::end".to_string(), duration_u64());
 
