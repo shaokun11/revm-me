@@ -226,12 +226,17 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
     /// This function will validate the transaction.
     #[inline]
     pub fn transact(&mut self) -> EVMResult<DB::Error> {
+        let start = std::time::Instant::now();
         let initial_gas_spend = self
             .preverify_transaction_inner()
             .inspect_err(|_e| self.clear())?;
-
+        println!("preverify_transaction_inner: {:?}", start.elapsed());
+        let start = std::time::Instant::now();
         let output = self.transact_preverified_inner(initial_gas_spend);
+        println!("transact_preverified_inner: {:?}", start.elapsed());
+        let start = std::time::Instant::now();
         let output = self.handler.post_execution().end(&mut self.context, output);
+        println!("post_execution: {:?}", start.elapsed());
         self.clear();
 
         // std::thread::sleep(std::time::Duration::from_millis(10));
