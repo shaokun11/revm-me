@@ -230,13 +230,9 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             .preverify_transaction_inner()
             .inspect_err(|_e| self.clear())?;
 
-        println!("initial_gas_spend: {}", initial_gas_spend);
         let output = self.transact_preverified_inner(initial_gas_spend);
-        println!("transact_preverified_inner");
         let output = self.handler.post_execution().end(&mut self.context, output);
-        println!("post_execution");
         self.clear();
-        println!("clear");
 
         // std::thread::sleep(std::time::Duration::from_millis(10));
         output
