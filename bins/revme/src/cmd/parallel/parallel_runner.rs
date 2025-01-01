@@ -5,11 +5,11 @@ use crate::cmd::statetest::{
     models::MultiTestSuite,
 };
 use revm::{
-    db::{State, CacheState},
+    db::{State, CacheState, DatabaseCommit},
     occda::Occda,
     task::Task,
     inspectors::NoOpInspector,
-    primitives::{keccak256, Bytes, TxKind, B256, Bytecode, SpecId, AccountInfo, Env},
+    primitives::{keccak256, Bytes, TxKind, B256, Bytecode, SpecId, AccountInfo, Env, ResultAndState},
     profiler,
     inspector_handle_register,
     Evm
@@ -18,7 +18,7 @@ use revm::{
 use std::{
     fmt::Debug,
     path::PathBuf,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use thiserror::Error;
@@ -105,6 +105,8 @@ pub fn run_sequential(
             .with_bundle_update()
             .build();
     let timer = Instant::now();
+    let mut execute_time = Duration::from_secs(0);
+    let mut commit_time = Duration::from_secs(0);
     for (idx, tx) in unit.transaction.iter().enumerate() {
         profiler::start(&format!("{}", idx));
 
@@ -150,6 +152,7 @@ pub fn run_sequential(
         description.insert("transaction_clone::end".to_string(), duration_u64());
 
         description.insert("evm_build::start".to_string(), duration_u64());
+        let execute_start = std::time::Instant::now();
         let mut evm = Evm::builder()
         .with_db(&mut state)
         .modify_env(|e| e.clone_from(&env))
@@ -160,8 +163,8 @@ pub fn run_sequential(
         description.insert("evm_build::end".to_string(), duration_u64());
 
         description.insert("evm_transact_commit::start".to_string(), duration_u64());
-        match evm.transact_commit() {
-            Ok(_) => {},
+        let ResultAndState { result, state } = match evm.transact() {
+            Ok(result) => result,
             Err(e) => {
                 let kind = TestErrorKind::UnexpectedException {
                     expected_exception: None,
@@ -169,7 +172,15 @@ pub fn run_sequential(
                 };
                 return Err(TestError { name: name.clone(), kind });
             },
-        }
+        };
+        let execute_end = std::time::Instant::now();
+        execute_time += execute_end - execute_start;
+
+        let commit_start = std::time::Instant::now();
+        evm.context.evm.db.commit(state); 
+        let commit_end = std::time::Instant::now();
+        commit_time += commit_end - commit_start;
+
         description.insert("evm_transact_commit::end".to_string(), duration_u64());
         description.insert("status".to_string(), Value::String("success".to_string()));
         profiler::notes(&format!("{}", idx), &mut description);
@@ -177,7 +188,9 @@ pub fn run_sequential(
         // println!("run_sequential_idx: {:?}", idx);
     };
     let elapsed = timer.elapsed();
-    println!("Execution time: {:?}", elapsed);
+    println!("Total time: {:?}", elapsed);
+    println!("Execute time: {:?}", execute_time);
+    println!("Commit time: {:?}", commit_time);
     println!("\nState root: {:#?}", state_merkle_trie_root(state.cache.trie_account()));
     profiler::dump_json("./profiler_output.json");
 
