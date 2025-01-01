@@ -1,5 +1,3 @@
-
-
 use serde_json::{Map, Value};
 use crate::cmd::statetest::{
     merkle_trie::state_merkle_trie_root,
@@ -24,7 +22,6 @@ use std::{
 };
 
 use thiserror::Error;
-use tokio::runtime::Runtime;
 use parking_lot::RwLock;
 use std::sync::Arc;
 
@@ -286,24 +283,19 @@ pub fn run_parallel(
         idx += 1;
     }
 
-    let h_tx = occda.init(tasks, None);
+    let mut h_tx = occda.init(tasks, None);
 
 
-    let rt = Runtime::new().map_err(|_| TestError {
-        name: "Runtime failed".to_string(),
-        kind: TestErrorKind::Panic,
-    })?;
-    rt.block_on(async {
-        let timer = Instant::now();
-        let state_arc = Arc::new(RwLock::new(state));
-        let _ = occda.main_with_db(h_tx, state_arc.clone()).await;
-        let elapsed = timer.elapsed();
-        profiler::dump_json("./profiler_output.json");
-        println!("Execution time: {:?}", elapsed);
-        let state_read = state_arc.read();
-        // println!("trie_account: {:#?}", state.cache);
-        println!("\nState root: {:#?}", state_merkle_trie_root(state_read.cache.trie_account()));
-    });
+    let state_arc = Arc::new(RwLock::new(state));
+    let state_clone = state_arc.clone();
+        
+    let total_start = std::time::Instant::now();
+    let _ = occda.main_with_db(&mut h_tx, state_clone);
+    let after_main = std::time::Instant::now();
+    println!("Time after main: {:?}", after_main - total_start);
+        
+    let state_read = state_arc.read();
+    println!("\nState root: {:#?}", state_merkle_trie_root(state_read.cache.trie_account()));
 
     Ok(())
 }

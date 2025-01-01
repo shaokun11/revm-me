@@ -45,7 +45,7 @@ serde_json = { version = "1.0", default-features = false, features = [
 tokio = { version = "1.40", features = [
     "rt-multi-thread",
     "macros",
-], optional = true }
+]}
 ethers-providers = { version = "2.0", optional = true }
 ethers-core = { version = "2.0", optional = true }
 
@@ -70,6 +70,7 @@ indicatif = "0.17"
 reqwest = { version = "0.12" }
 rstest = "0.22.0"
 alloy-provider = "0.5.3"
+
 
 [features]
 default = ["std", "c-kzg", "secp256k1", "portable", "blst", "serde", "serde-json"]

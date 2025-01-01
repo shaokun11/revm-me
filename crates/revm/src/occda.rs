@@ -15,7 +15,6 @@ use rayon::ThreadPool;
 use rayon::prelude::*;
 use parking_lot::RwLock;
 
-
 pub struct Occda {
     _dag: TaskDag,
     thread_pool: ThreadPool
@@ -32,7 +31,7 @@ impl Occda
         
         Occda {
             _dag: TaskDag::new(),
-            thread_pool,
+            thread_pool
         }
     }
 
@@ -75,15 +74,27 @@ impl Occda
                 .append_handler_register(register_handles_fn)
                 .build()
         }
+    
+    pub fn test_fn<I>(&mut self) -> Result<Vec<Task<I>>, Box<dyn std::error::Error + Send + Sync>> {
+        let total_start = std::time::Instant::now();
+                
+        // 创建一个简单的 Vec
+        let task_list = vec![];  // 最小化测试数据
+                
+        let total_time = total_start.elapsed();
+        println!("total time: {:?}", total_time);
+                
+        Ok(task_list)  // 只测试返回值的开销
+    }
 
-    pub async fn main_with_db<DB: DatabaseRef + Database + DatabaseCommit + Send + Sync, I>(
+    pub fn main_with_db<'a, DB: DatabaseRef + Database + DatabaseCommit + Send + Sync, I>(
         &mut self,
-        mut h_tx: BinaryHeap<Reverse<SidOrderedTask<I>>>,
-        db: Arc<RwLock<DB>>
+        h_tx: &'a mut BinaryHeap<Reverse<SidOrderedTask<I>>>,
+        db: Arc<RwLock<DB>>,
     ) -> Result<Vec<Task<I>>, Box<dyn std::error::Error + Send + Sync>> 
     where
         DB: DatabaseRef + Database + DatabaseCommit + Send + Sync,
-        I: Send + Sync + Clone + for<'db> GetInspector<WrapDatabaseRef<&'db DB>>,
+        I: Send + Sync + Clone + 'static + for<'db> GetInspector<WrapDatabaseRef<&'db DB>>,
     {
         let tx_size = h_tx.len();
         let mut exec_size = 0;
@@ -93,7 +104,9 @@ impl Occda
         let len = h_tx.len();
         let mut access_tracker = AccessTracker::new();
 
-        let mut task_list: Vec<Task<I>> = Vec::new();
+        let mut task_list: Vec<Task<I>> = Vec::with_capacity(len);
+
+        let task_start = std::time::Instant::now();
         while next < len {
             // Schedule tasks
             while let Some(Reverse(SidOrderedTask(task))) = h_tx.pop() {
@@ -116,7 +129,7 @@ impl Occda
 
             let this = &*self;
             let db_shared = Arc::clone(&db);
-            let results: Vec<_> = if tasks.len() == 1 {
+            let results: Vec<Task<I>> = if tasks.len() == 1 {
                 let Reverse(TidOrderedTask(mut task)) = tasks.pop().unwrap();
                 let db_ref = db.read();
                 let db_ref_mut: &DB = &*db_ref;
@@ -149,7 +162,8 @@ impl Occda
                 
                 vec![task]
             } else {
-                self.thread_pool.install(|| {
+                let parallel_start = std::time::Instant::now();
+                let parallel_result = self.thread_pool.install(|| {
                     tasks.into_par_iter()
                     .map({
                         let this = this;
@@ -192,18 +206,21 @@ impl Occda
                         }
                     })
                     .collect()
-                })
+                });
+                let parallel_time = parallel_start.elapsed();
+                println!("parallel time: {:?}", parallel_time);
+                parallel_result
             };
 
-            // task_list.extend(results);
-            // task_list.extend(results.iter().map(|t| t.clone()));
             for task in results {
                 h_commit.push(Reverse(TidOrderedTask(task)));
             }
+            
 
             // 
             // Commit tasks
             // Commit or abort tasks
+            let start = std::time::Instant::now();
             while let Some(Reverse(TidOrderedTask(mut task))) = h_commit.pop() {
                 if task.tid != next as i32 {
                     h_commit.push(Reverse(TidOrderedTask(task)));
@@ -227,7 +244,6 @@ impl Occda
 
                     db.write().commit(state_to_commit.clone());
                     
-
                     access_tracker.record_write_set(
                         task.tid,
                         &task.read_write_set.as_ref().unwrap().write_set
@@ -237,6 +253,8 @@ impl Occda
                 }
 
             }
+            let end = std::time::Instant::now();
+            println!("commit time: {:?}", end - start);
         }
 
         let conflict_rate = ((exec_size - tx_size) as f64) / (tx_size as f64) * 100.0;
@@ -245,7 +263,20 @@ impl Occda
             task_list.len(), 
             conflict_rate
         );
-        Ok(task_list)
+
+        std::thread::spawn(move || {
+            drop(access_tracker);
+            drop(task_list);
+        });
+
+        let result = Ok(vec![]);
+        let task_end = std::time::Instant::now();
+        let task_time = task_end - task_start;
+        
+        println!("task time: {:?}", task_time);
+        
+
+        result
     }
 
 }
