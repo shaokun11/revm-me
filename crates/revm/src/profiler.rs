@@ -123,6 +123,11 @@ pub fn note(name: &str, key: &str, value: Value) {
         .insert(key.to_string(), value);
 }
 
+/// Add a key-value note to the last event, where the value is a string
+pub fn note_str(name: &str, key: &str, value: &str) {
+    note(name, key, Value::String(value.to_string()));
+}
+
 /// Add a map of key-value notes to the last event
 pub fn notes(name: &str, description: &mut Map<String, Value>) {
     let mut profiler = Profiler::global().lock().unwrap();

@@ -10,6 +10,7 @@ use crate::db::{Database, DatabaseCommit, DatabaseRef, WrapDatabaseRef};
 use crate::inspector::GetInspector;
 use crate::inspector_handle_register;
 use crate::handler::register::HandleRegister;
+use crate::profiler;
 use std::sync::Arc;
 use rayon::ThreadPool;
 use rayon::prelude::*;
@@ -118,9 +119,13 @@ impl Occda
             let db_shared = Arc::clone(&db);
             let results: Vec<_> = if tasks.len() == 1 {
                 let Reverse(TidOrderedTask(mut task)) = tasks.pop().unwrap();
+
+                let tx_hash = format!("{:?}-{:?}", task.env.tx.caller, task.env.tx.nonce);
+                profiler::start(&tx_hash);
+                profiler::note_str(&tx_hash, "type", "transaction");
+
                 let db_ref = db.read();
                 let db_ref_mut: &DB = &*db_ref;
-                
                 let inspector = task.inspector.take().unwrap();
                 let mut evm = this.build_evm(
                     db_ref_mut,
@@ -136,16 +141,19 @@ impl Occda
                         let ResultAndState { state, result } = result_and_state;
                         task.state = Some(state);
                         task.result = Some(result);
+                        profiler::note_str(&tx_hash, "status", "success");
                     },
                     Err(_) => {
                         task.state = None;
                         task.gas = 0;
+                        profiler::note_str(&tx_hash, "status", "revert");
                     },
                 };
                 task.inspector = Some(evm.context.external.clone());
                 let mut read_write_set = evm.get_read_write_set();
                 read_write_set.add_write(task.env.tx.caller, AccessType::AccountInfo);
                 task.read_write_set = Some(read_write_set);
+                profiler::end(&tx_hash);
                 
                 vec![task]
             } else {
@@ -155,6 +163,10 @@ impl Occda
                         let this = this;
                         let db_shared = Arc::clone(&db_shared);
                         move |Reverse(TidOrderedTask(mut task))| {
+                            let tx_hash = format!("{:?}-{:?}", task.env.tx.caller, task.env.tx.nonce);
+                            profiler::start(&tx_hash);
+                            profiler::note_str(&tx_hash, "type", "transaction");
+
                             let db_ref = db_shared.read();
                             {
                                 let inspector = task.inspector.take().unwrap();
@@ -168,7 +180,7 @@ impl Occda
                                 read_write_set.add_write(task.env.tx.caller, AccessType::AccountInfo);
                                 task.read_write_set = Some(read_write_set);
     
-                                match result {
+                                let status = match result {
                                     Ok(result_and_state) => {
                                         let ResultAndState { state, result } = result_and_state;
                                         task.state = Some(state);
@@ -185,8 +197,9 @@ impl Occda
                                         "abort"
                                     },
                                 };
-                            } 
-                            
+                                profiler::note_str(&tx_hash, "status", status);
+                            }
+                            profiler::end(&tx_hash);
     
                             task
                         }
