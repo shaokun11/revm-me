@@ -1,3 +1,5 @@
+//! Profiler for tracing the execution of the RPC server.
+
 use once_cell::sync::Lazy;
 use serde_json::{json, Map, Value};
 use std::{
@@ -64,13 +66,19 @@ impl Profiler {
             .unwrap()
     }
     
+    fn clear(&mut self) {
+        self.raw_events.clear();
+    }
+    
 }
 
+/// Get the genesis time of the profiler
 pub fn get_genesis() -> Instant {
     let profiler = Profiler::global().lock().unwrap();
     profiler.genesis
 }
 
+/// Start a new task
 pub fn start(name: &str) {
     let mut profiler = Profiler::global().lock().unwrap();
     let genesis = profiler.genesis;
@@ -89,6 +97,7 @@ pub fn start(name: &str) {
     ));
 }
 
+/// End a task
 pub fn end(name: &str) {
     let mut profiler = Profiler::global().lock().unwrap();
     assert!(
@@ -99,6 +108,7 @@ pub fn end(name: &str) {
         Some(Instant::now().duration_since(profiler.genesis).as_nanos());
 }
 
+/// Add a key-value note to the last event
 pub fn note(name: &str, key: &str, value: Value) {
     let mut profiler = Profiler::global().lock().unwrap();
     assert!(
@@ -113,6 +123,7 @@ pub fn note(name: &str, key: &str, value: Value) {
         .insert(key.to_string(), value);
 }
 
+/// Add a map of key-value notes to the last event
 pub fn notes(name: &str, description: &mut Map<String, Value>) {
     let mut profiler = Profiler::global().lock().unwrap();
     profiler
@@ -123,6 +134,7 @@ pub fn notes(name: &str, description: &mut Map<String, Value>) {
         .append(description);
 }
 
+/// Add a key-value note to the last event, the value is the current time
 pub fn note_time(name: &str, key: &str) {
     let mut profiler = Profiler::global().lock().unwrap();
     let genesis = profiler.genesis;
@@ -136,6 +148,13 @@ pub fn note_time(name: &str, key: &str) {
     );
 }
 
+/// Clear all profiling data
+pub fn clear() {
+    let mut profiler = Profiler::global().lock().unwrap();
+    profiler.clear();
+}
+
+/// Dump the profiler to a JSON string
 pub fn dump() -> String {
     let profiler = Profiler::global().lock().unwrap();
     let now = Instant::now().duration_since(profiler.genesis).as_nanos();
@@ -159,12 +178,19 @@ pub fn dump() -> String {
                             "runtime": duration,
                             "start": start,
                             "end": end_opt,
-                            "status": description.get("status").unwrap().as_str().unwrap(),
+                            // "status": description.get("status").unwrap().as_str().unwrap_or("unknown"),
+                            "status": match description.get("status") {
+                                Some(value) => value.as_str().unwrap_or("unknown"),
+                                None => "unknown",
+                            },
                             "detail": description,
                         })),
                         "commit" => detail.push(json!({
                             "type": "commit",
-                            "tx": description.get("tx").unwrap().as_str().unwrap(),
+                            "tx": match description.get("tx") {
+                                Some(value) => value.as_str().unwrap_or("unknown"),
+                                None => "unknown",
+                            },
                             "runtime": duration,
                             "start": start,
                             "end": end_opt,
@@ -201,6 +227,7 @@ pub fn dump() -> String {
     serde_json::to_string_pretty(&output_frontend).unwrap()
 }
 
+/// Dump the generated JSON to a file
 pub fn dump_json(output_path: &str) {
     let result_json = dump();
     let mut file = File::create(output_path).unwrap();
