@@ -120,9 +120,10 @@ impl Occda
             let results: Vec<_> = if tasks.len() == 1 {
                 let Reverse(TidOrderedTask(mut task)) = tasks.pop().unwrap();
 
-                let tx_hash = format!("{:?}-{:?}", task.env.tx.caller, task.env.tx.nonce);
-                profiler::start(&tx_hash);
-                profiler::note_str(&tx_hash, "type", "transaction");
+                let txid = task.tid.to_string();
+                profiler::start(&txid);
+                profiler::note_str(&txid, "type", "transaction");
+                profiler::note_str(&txid, "caller", &task.env.tx.caller.to_string());
 
                 let db_ref = db.read();
                 let db_ref_mut: &DB = &*db_ref;
@@ -141,19 +142,19 @@ impl Occda
                         let ResultAndState { state, result } = result_and_state;
                         task.state = Some(state);
                         task.result = Some(result);
-                        profiler::note_str(&tx_hash, "status", "success");
+                        profiler::note_str(&txid, "status", "success");
                     },
                     Err(_) => {
                         task.state = None;
                         task.gas = 0;
-                        profiler::note_str(&tx_hash, "status", "revert");
+                        profiler::note_str(&txid, "status", "revert");
                     },
                 };
                 task.inspector = Some(evm.context.external.clone());
                 let mut read_write_set = evm.get_read_write_set();
                 read_write_set.add_write(task.env.tx.caller, AccessType::AccountInfo);
                 task.read_write_set = Some(read_write_set);
-                profiler::end(&tx_hash);
+                profiler::end(&txid);
                 
                 vec![task]
             } else {
@@ -163,9 +164,10 @@ impl Occda
                         let this = this;
                         let db_shared = Arc::clone(&db_shared);
                         move |Reverse(TidOrderedTask(mut task))| {
-                            let tx_hash = format!("{:?}-{:?}", task.env.tx.caller, task.env.tx.nonce);
-                            profiler::start(&tx_hash);
-                            profiler::note_str(&tx_hash, "type", "transaction");
+                            let txid = task.tid.to_string();
+                            profiler::start(&txid);
+                            profiler::note_str(&txid, "type", "transaction");
+                            profiler::note_str(&txid, "caller", &task.env.tx.caller.to_string());
 
                             let db_ref = db_shared.read();
                             {
@@ -197,9 +199,9 @@ impl Occda
                                         "abort"
                                     },
                                 };
-                                profiler::note_str(&tx_hash, "status", status);
+                                profiler::note_str(&txid, "status", status);
                             }
-                            profiler::end(&tx_hash);
+                            profiler::end(&txid);
     
                             task
                         }
