@@ -225,6 +225,11 @@ impl Occda
                     break;
                 }
 
+                let txid = task.tid.to_string();
+                profiler::start(&format!("commit-{}", txid));
+                profiler::note_str(&format!("commit-{}", txid), "type", "commit");
+                profiler::note_str(&format!("commit-{}", txid), "tx", &txid);
+
                 // Check conflicts with all tasks between sid+1 and tid-1
                 let conflict = access_tracker.check_conflict_in_range(
                     &task.read_write_set.as_ref().unwrap().read_set,
@@ -250,7 +255,7 @@ impl Occda
                     task_list.push(task);
                     next += 1;
                 }
-
+                profiler::end(&format!("commit-{}", txid));
             }
         }
 
