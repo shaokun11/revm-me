@@ -149,7 +149,7 @@ impl Occda {
                     &task.env,
                     inspector_handle_register,
                 );
-                let mut task_result = TaskResultItem::new();    
+                let mut task_result = TaskResultItem::default();    
                 task_result.inspector = Some(evm.context.external.clone());
                 task_result.gas = task.gas;
                 
@@ -194,7 +194,7 @@ impl Occda {
                                 let result = evm.transact();
 
                                 // Process execution results
-                                let mut task_result = TaskResultItem::new();
+                                let mut task_result = TaskResultItem::default();
                                 let mut task_state = TaskState::new();
                                 task_result.inspector = Some(evm.context.external.clone());
                                 task_result.gas = task.gas;

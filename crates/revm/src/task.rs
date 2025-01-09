@@ -27,11 +27,20 @@ impl<I> Task<I> {
 
 }
 
-#[derive(Default)]
 pub struct TaskResultItem<I> {
     pub gas: u64,
     pub result: Option<ExecutionResult>,
     pub inspector: Option<I>,
+}
+
+impl<I> Default for TaskResultItem<I> {
+    fn default() -> Self {
+        Self {
+            gas: 0,
+            result: None,
+            inspector: None,
+        }
+    }
 }
 
 pub struct TaskState {
