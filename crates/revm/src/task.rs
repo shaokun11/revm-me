@@ -27,6 +27,7 @@ impl<I> Task<I> {
 
 }
 
+#[derive(Clone)]
 pub struct TaskResultItem<I> {
     pub gas: u64,
     pub result: Option<ExecutionResult>,
