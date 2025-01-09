@@ -1,98 +1,86 @@
-use crate::primitives::{Env, EvmState, ExecutionResult, SpecId};
+use crate::primitives::{ExecutionResult, EvmState, Env, SpecId};
 use crate::journaled_state::ReadWriteSet;
-use std::cmp::Ordering;
 
 #[derive(Clone)]
 pub struct Task<I> {
-    pub env: Box<Env>,
-    pub spec_id: SpecId,
-    pub inspector: Option<I>,
-    pub read_write_set: Option<ReadWriteSet>,
     pub tid: i32,
     pub sid: i32,
     pub gas: u64,
-    pub state: Option<EvmState>,
-    pub result: Option<ExecutionResult>,    
+    pub inspector: Option<I>,
+    pub spec_id: SpecId,
+    pub env: Box<Env>,
 }
 
 impl<I> Task<I> {
     pub fn new(env: Box<Env>, tid: i32, sid: i32, spec_id: SpecId, inspector: Option<I>) -> Self {
-        Task {
-            spec_id,
-            inspector,
-            read_write_set: None,
+        Self {
             tid,
             sid,
-            gas: env.tx.gas_limit,
+            gas: 21000,
+            inspector,
+            spec_id,
             env,
-            state: None,
-            result: None,
         }
     }
 }
 
-pub struct SidOrderedTask<I>(pub Task<I>);
-pub struct TidOrderedTask<I>(pub Task<I>);
-pub struct GasOrderedTask<I>(pub Task<I>);
+pub struct TaskResultItem<I> {
+    pub gas: u64,
+    pub result: Option<ExecutionResult>,
+    
+    pub inspector: Option<I>,
+}
 
-impl<I> Ord for SidOrderedTask<I> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.0.sid.cmp(&other.0.sid)
-            .then_with(|| self.0.tid.cmp(&other.0.tid))
+impl<I> TaskResultItem<I> {
+    pub fn new() -> Self {
+        Self {
+            gas: 0,
+            result: None,
+            inspector: None,
+        }
     }
 }
 
-impl<I> PartialOrd for SidOrderedTask<I> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
+pub struct TaskResultList<I> {
+    pub items: Vec<TaskResultItem<I>>,
+}
+
+impl<I> TaskResultList<I> {
+    pub fn new_with_capacity(capacity: usize) -> Self {
+        let mut items = Vec::with_capacity(capacity);
+
+        for _ in 0..capacity {
+            items.push(TaskResultItem::new());
+        }
+
+        Self {
+            items,
+        }
+    }
+
+    pub fn set(&mut self, tid: i32, item: TaskResultItem<I>) {
+        self.items[tid as usize] = item;
+    }
+
+    pub fn as_raw_mut_ptr(&mut self) -> *mut TaskResultItem<I> {
+        self.items.as_mut_ptr() 
+    }
+    
+    pub fn len(&self) -> usize {
+        self.items.len()
     }
 }
 
-impl<I> PartialEq for SidOrderedTask<I> {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.sid == other.0.sid && self.0.tid == other.0.tid
-    }
+pub struct TaskState {
+    pub read_write_set: Option<ReadWriteSet>,
+    pub state: Option<EvmState>,
 }
 
-impl<I> Eq for SidOrderedTask<I> {}
-
-impl<I> Ord for TidOrderedTask<I> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.0.tid.cmp(&other.0.tid)
+impl TaskState {
+    pub fn new() -> Self {
+        Self {
+            read_write_set: None,
+            state: None,
+        }
     }
 }
-
-impl<I> PartialOrd for TidOrderedTask<I> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<I> PartialEq for TidOrderedTask<I> {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.tid == other.0.tid
-    }
-}
-
-impl<I> Eq for TidOrderedTask<I> {}
-
-impl<I> Ord for GasOrderedTask<I> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.0.gas.cmp(&other.0.gas)
-            .then_with(|| self.0.tid.cmp(&other.0.tid))
-    }
-}
-
-impl<I> PartialOrd for GasOrderedTask<I> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<I> PartialEq for GasOrderedTask<I> {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.gas == other.0.gas && self.0.tid == other.0.tid
-    }
-}
-
-impl<I> Eq for GasOrderedTask<I> {}

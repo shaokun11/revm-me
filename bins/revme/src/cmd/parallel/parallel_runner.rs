@@ -8,6 +8,7 @@ use revm::{
     db::{State, CacheState, DatabaseCommit},
     occda::Occda,
     task::Task,
+    task::TaskResultItem,
     inspectors::NoOpInspector,
     primitives::{keccak256, Bytes, TxKind, B256, Bytecode, SpecId, AccountInfo, Env, ResultAndState},
     profiler,
@@ -163,7 +164,7 @@ pub fn run_sequential(
         description.insert("evm_build::end".to_string(), duration_u64());
 
         description.insert("evm_transact_commit::start".to_string(), duration_u64());
-        let ResultAndState { result, state } = match evm.transact() {
+        let ResultAndState { result:_, state } = match evm.transact() {
             Ok(result) => result,
             Err(e) => {
                 let kind = TestErrorKind::UnexpectedException {
@@ -296,6 +297,7 @@ pub fn run_parallel(
         idx += 1;
     }
 
+    let len = tasks.len();
     let mut h_tx = occda.init(tasks, None);
 
 
@@ -303,7 +305,12 @@ pub fn run_parallel(
     let state_clone = state_arc.clone();
         
     let total_start = std::time::Instant::now();
-    let _ = occda.main_with_db(&mut h_tx, state_clone);
+    let mut result_store = Vec::with_capacity(len);
+    for _ in 0..len {
+        result_store.push(TaskResultItem::new());
+    }
+
+    let _ = occda.main_with_db(&mut h_tx, state_clone, &mut result_store);
     let after_main = std::time::Instant::now();
     println!("Time after main: {:?}", after_main - total_start);
         
