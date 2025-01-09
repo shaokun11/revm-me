@@ -3,7 +3,7 @@
 use crate::primitives::{ResultAndState, SpecId, Env};
 use crate::access_tracker::AccessTracker;
 use crate::journaled_state::AccessType;
-use crate::task::{Task, TaskState, TaskResultItem};
+use crate::task::{Task, TaskResultItem};
 use crate::dag::TaskDag;
 use crate::evm::Evm;
 use crate::db::{Database, DatabaseCommit, DatabaseRef, WrapDatabaseRef};
@@ -108,15 +108,9 @@ impl Occda {
         let mut access_tracker = AccessTracker::new();
         
         // Initialize result and state storage
-        let mut state_store = Vec::with_capacity(len);
-        for i in 0..len {
-            state_store.push(TaskState::new());
-            h_exec.push(Reverse(i));
-        }
 
         let db_shared = db.clone();
 
-        let store_ptr_usize = state_store.as_mut_ptr() as usize;
         let result_ptr = result_store.as_mut_ptr() as usize;
 
         // Main processing loop
@@ -157,7 +151,7 @@ impl Occda {
                 match result {
                     Ok(result_and_state) => {
                         let ResultAndState { state, result } = result_and_state;
-                        state_store[task.tid as usize].state = Some(state);
+                        task_result.state = Some(state);
                         task_result.result = Some(result);
                     }
                     Err(_) => {
@@ -195,32 +189,31 @@ impl Occda {
 
                                 // Process execution results
                                 let mut task_result = TaskResultItem::default();
-                                let mut task_state = TaskState::new();
                                 task_result.inspector = Some(evm.context.external.clone());
                                 task_result.gas = task.gas;
+
+                                
 
                                 // Track read-write access
                                 let mut read_write_set = evm.get_read_write_set();
                                 read_write_set.add_write(task.env.tx.caller, AccessType::AccountInfo);
-                                task_state.read_write_set = Some(read_write_set);
+                                task_result.read_write_set = Some(read_write_set);
 
                                 // Handle execution result
                                 match result {
                                     Ok(result_and_state) => {
                                         let ResultAndState { state, result } = result_and_state;
-                                        task_state.state = Some(state);
+                                        task_result.state = Some(state);
                                         task_result.result = Some(result);
                                     }
                                     Err(_) => {
-                                        task_state.state = None;
+                                        task_result.state = None;
                                         task_result.gas = 0;
                                     }
                                 }
 
-                                let store_raw_ptr = store_ptr_usize as *mut TaskState;
                                 let result_raw_ptr = result_ptr as *mut TaskResultItem<I>;
                                 unsafe {
-                                    *store_raw_ptr.add(*idx) = task_state;
                                     *result_raw_ptr.add(*idx) = task_result;
                                 }
                             }
@@ -246,10 +239,10 @@ impl Occda {
                     break;
                 }
 
-                let task_state = &mut state_store[task_idx as usize];
+                let task_result = &mut result_store[task_idx as usize];
 
                 // Check for conflicts
-                let read_write_set = task_state.read_write_set.as_ref().unwrap();
+                let read_write_set = task_result.read_write_set.as_ref().unwrap();
                 let conflict = access_tracker.check_conflict_in_range(
                     &read_write_set.read_set,
                     h_tx[task_idx].sid + 1,
@@ -264,7 +257,7 @@ impl Occda {
                     h_exec.push(Reverse(task_idx));
                 } else {
                     // No conflict: commit changes and update access tracker
-                    if let Some(state) = task_state.state.take() {
+                    if let Some(state) = task_result.state.take() {
                         db_mut.commit(state);
                     }
 
@@ -288,7 +281,6 @@ impl Occda {
         // Clean up resources asynchronously
         std::thread::spawn(move || {
             drop(access_tracker);
-            drop(state_store);
             drop(h_exec);
             drop(h_commit);
             drop(h_ready);

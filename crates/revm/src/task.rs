@@ -32,6 +32,8 @@ pub struct TaskResultItem<I> {
     pub gas: u64,
     pub result: Option<ExecutionResult>,
     pub inspector: Option<I>,
+    pub read_write_set: Option<ReadWriteSet>,
+    pub state: Option<EvmState>,
 }
 
 impl<I> Default for TaskResultItem<I> {
@@ -40,18 +42,6 @@ impl<I> Default for TaskResultItem<I> {
             gas: 0,
             result: None,
             inspector: None,
-        }
-    }
-}
-
-pub struct TaskState {
-    pub read_write_set: Option<ReadWriteSet>,
-    pub state: Option<EvmState>,
-}
-
-impl TaskState {
-    pub fn new() -> Self {
-        Self {
             read_write_set: None,
             state: None,
         }
