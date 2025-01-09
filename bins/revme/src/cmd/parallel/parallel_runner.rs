@@ -305,10 +305,7 @@ pub fn run_parallel(
     let state_clone = state_arc.clone();
         
     let total_start = std::time::Instant::now();
-    let mut result_store = Vec::with_capacity(len);
-    for _ in 0..len {
-        result_store.push(TaskResultItem::new());
-    }
+    let mut result_store = vec![TaskResultItem::default(); len];
 
     let _ = occda.main_with_db(&mut h_tx, state_clone, &mut result_store);
     let after_main = std::time::Instant::now();

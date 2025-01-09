@@ -1,3 +1,5 @@
+use core::default::Default;
+
 use crate::primitives::{ExecutionResult, EvmState, Env, SpecId};
 use crate::journaled_state::ReadWriteSet;
 
@@ -22,53 +24,14 @@ impl<I> Task<I> {
             env,
         }
     }
+
 }
 
+#[derive(Default)]
 pub struct TaskResultItem<I> {
     pub gas: u64,
     pub result: Option<ExecutionResult>,
-    
     pub inspector: Option<I>,
-}
-
-impl<I> TaskResultItem<I> {
-    pub fn new() -> Self {
-        Self {
-            gas: 0,
-            result: None,
-            inspector: None,
-        }
-    }
-}
-
-pub struct TaskResultList<I> {
-    pub items: Vec<TaskResultItem<I>>,
-}
-
-impl<I> TaskResultList<I> {
-    pub fn new_with_capacity(capacity: usize) -> Self {
-        let mut items = Vec::with_capacity(capacity);
-
-        for _ in 0..capacity {
-            items.push(TaskResultItem::new());
-        }
-
-        Self {
-            items,
-        }
-    }
-
-    pub fn set(&mut self, tid: i32, item: TaskResultItem<I>) {
-        self.items[tid as usize] = item;
-    }
-
-    pub fn as_raw_mut_ptr(&mut self) -> *mut TaskResultItem<I> {
-        self.items.as_mut_ptr() 
-    }
-    
-    pub fn len(&self) -> usize {
-        self.items.len()
-    }
 }
 
 pub struct TaskState {
