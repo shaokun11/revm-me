@@ -3,8 +3,10 @@
 use once_cell::sync::Lazy;
 use serde_json::{json, Map, Value};
 use std::{
-    collections::HashMap, fs::File, io::Write, sync::Mutex, thread::ThreadId, time::Instant,
+    collections::HashMap, fs::File, io::{BufWriter, Write}, 
+    sync::Mutex, thread::ThreadId, time::Instant,
 };
+use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 
 static PROFILER: Lazy<Mutex<Profiler>> = Lazy::new(|| {
     Mutex::new(Profiler {
@@ -12,6 +14,8 @@ static PROFILER: Lazy<Mutex<Profiler>> = Lazy::new(|| {
         raw_events: HashMap::new(),
     })
 });
+
+
 
 struct Profiler {
     genesis: Instant,
@@ -237,4 +241,16 @@ pub fn dump_json(output_path: &str) {
     let result_json = dump();
     let mut file = File::create(output_path).unwrap();
     file.write_all(result_json.as_bytes()).unwrap();
+}
+
+/// Dump the generated JSON to a zip file
+pub fn dump_zip(output_path: &str) {
+    let result_json = dump();
+    let file = File::create(output_path).unwrap();
+    let mut zip = ZipWriter::new(BufWriter::new(file));
+    let options = FileOptions::<()>::default()
+        .compression_method(CompressionMethod::Deflated);
+    zip.start_file(output_path, options).unwrap();
+    zip.write_all(result_json.as_bytes()).unwrap();
+    zip.finish().unwrap();
 }
