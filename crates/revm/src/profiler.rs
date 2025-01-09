@@ -244,13 +244,13 @@ pub fn dump_json(output_path: &str) {
 }
 
 /// Dump the generated JSON to a zip file
-pub fn dump_zip(output_path: &str) {
+pub fn dump_zip(output_name: &str) {
     let result_json = dump();
-    let file = File::create(output_path).unwrap();
+    let file = File::create(output_name.to_string() + ".zip").unwrap();
     let mut zip = ZipWriter::new(BufWriter::new(file));
     let options = FileOptions::<()>::default()
         .compression_method(CompressionMethod::Deflated);
-    zip.start_file(output_path, options).unwrap();
+    zip.start_file(output_name.to_string() + ".json", options).unwrap();
     zip.write_all(result_json.as_bytes()).unwrap();
     zip.finish().unwrap();
 }
