@@ -188,6 +188,8 @@ impl Occda {
                             let mut transact_time = Duration::from_secs(0);
                             let mut write_result_time = Duration::from_secs(0);
 
+                            println!("task_size: {:?} thread_id: {}", indexes.len(), thread_id);
+
                             for idx in indexes {
                                 let task = &h_tx[*idx];
                                 
