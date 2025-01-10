@@ -187,6 +187,7 @@ impl Occda {
                             let mut init_time = Duration::from_secs(0);
                             let mut transact_time = Duration::from_secs(0);
                             let mut write_result_time = Duration::from_secs(0);
+                            let mut transact_times = Vec::with_capacity(indexes.len());
 
                             println!("task_size: {:?} thread_id: {}", indexes.len(), thread_id);
 
@@ -208,7 +209,9 @@ impl Occda {
                                 let transact_start = std::time::Instant::now();
                                 let result = evm.transact();
                                 let transact_end = std::time::Instant::now();
-                                transact_time += transact_end - transact_start;
+                                let this_transact_time = transact_end - transact_start;
+                                transact_time += this_transact_time;
+                                transact_times.push(this_transact_time);
 
                                 let write_start = std::time::Instant::now();
                                 // Process execution results
@@ -242,6 +245,14 @@ impl Occda {
                                 write_result_time += write_end - write_start;
                             }
                             thread_times.write()[thread_id] = (db_read_time, init_time, transact_time, write_result_time);
+                            // 打印每个任务的执行时间统计
+                            if !transact_times.is_empty() {
+                                let avg = transact_times.iter().sum::<Duration>() / transact_times.len() as u32;
+                                let min = transact_times.iter().min().unwrap();
+                                let max = transact_times.iter().max().unwrap();
+                                println!("Thread {} transact times - avg: {:?}, min: {:?}, max: {:?}", 
+                                    thread_id, avg, min, max);
+                            }
                         });
                 });
                 let parallel_end = std::time::Instant::now();
