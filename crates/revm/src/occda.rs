@@ -16,6 +16,7 @@ use parking_lot::RwLock;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use once_cell::sync::OnceCell;
+use std::time::Duration;
 
 // Main struct for handling parallel execution of EVM transactions
 pub struct Occda {
@@ -75,6 +76,12 @@ impl Occda {
         DB: DatabaseRef + Database + DatabaseCommit + Send + Sync,
         I: Send + Sync + Clone + 'static + for<'db> GetInspector<WrapDatabaseRef<&'db DB>>,
     {
+
+        let mut perpare_time = Duration::from_secs(0);
+        let mut commit_time = Duration::from_secs(0);
+        let mut parallel_time = Duration::from_secs(0);
+        let mut seq_time = Duration::from_secs(0);
+
         // Initialize tracking variables
         let tx_size = h_tx.len();
         let mut exec_size = 0;
@@ -99,6 +106,7 @@ impl Occda {
 
         // Main processing loop
         while next < len {
+            let perpare_start = std::time::Instant::now();
             // Find tasks ready for execution based on sequence ID
             while let Some(Reverse((sid, tid))) = h_exec.pop() {
                 if h_tx[tid as usize].sid <= (next as i32 - 1) {
@@ -111,12 +119,15 @@ impl Occda {
             if h_ready.is_empty() {
                 break;
             }
+            let perpare_end = std::time::Instant::now();
+            perpare_time += perpare_end - perpare_start;
 
             // Sort ready tasks by gas (higher gas first)
             exec_size += h_ready.len();
             let ready_tasks = std::mem::take(&mut h_ready);
             
             if ready_tasks.len() == 1 {
+                let seq_start = std::time::Instant::now();
                 let idx = ready_tasks[0];
                 let task = &h_tx[idx];
                 let db_ref = db_shared.read();
@@ -152,8 +163,11 @@ impl Occda {
                 }
                 
                 result_store[idx] = task_result;
+                let seq_end = std::time::Instant::now();
+                seq_time += seq_end - seq_start;
                 
             } else {
+                let parallel_start = std::time::Instant::now();
                 let chunk_size = ready_tasks.len() / self.num_threads + (ready_tasks.len() % self.num_threads > 0) as usize;
                 // Execute tasks in parallel using thread pool
                 THREAD_POOL.get().unwrap().install(|| {
@@ -208,13 +222,15 @@ impl Occda {
                             
                         });
                 });
-
+                let parallel_end = std::time::Instant::now();
+                parallel_time += parallel_end - parallel_start;
             }
 
             h_commit.extend(ready_tasks.iter().map(|&idx| Reverse(idx)));
 
             // Begin commit phase
             // let start = std::time::Instant::now();
+            let commit_start = std::time::Instant::now();
             let mut db_mut = db.write();
             
             // Process commits in order
@@ -258,6 +274,8 @@ impl Occda {
                     next += 1;
                 }
             }
+            let commit_end = std::time::Instant::now();
+            commit_time += commit_end - commit_start;
         }
 
         // Calculate and log execution statistics
@@ -267,6 +285,10 @@ impl Occda {
             result_store.len(),
             conflict_rate
         );
+        println!("perpare_time: {:?}", perpare_time);
+        println!("parallel_time: {:?}", parallel_time);
+        println!("seq_time: {:?}", seq_time);
+        println!("commit_time: {:?}", commit_time); 
 
         // Clean up resources asynchronously
         std::thread::spawn(move || {
