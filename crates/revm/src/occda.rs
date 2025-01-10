@@ -129,7 +129,7 @@ impl Occda {
                                 .append_handler_register(inspector_handle_register)
                                 .build();
                 let result = evm.transact();
-                
+
                 let mut task_result = TaskResultItem::default();    
                 task_result.inspector = Some(evm.context.external.clone());
                 task_result.gas = task.gas;
@@ -247,7 +247,7 @@ impl Occda {
                     h_exec.push(Reverse((h_tx[task_idx].sid as usize, h_tx[task_idx].tid as usize)));
                 } else {
                     // No conflict: commit changes and update access tracker
-                    if let Some(state) = task_result.state.take() {
+                    if let Some(state) = task_result.state.clone() {
                         db_mut.commit(state);
                     }
 
