@@ -1,6 +1,6 @@
 // OCCDA (Optimistic Concurrent Contract Deployment and Analysis) implementation
 // This module provides parallel execution of EVM transactions with optimistic concurrency control
-use crate::primitives::{ResultAndState, SpecId, Env};
+use crate::primitives::ResultAndState;
 use crate::access_tracker::AccessTracker;
 use crate::journaled_state::AccessType;
 use crate::task::{Task, TaskResultItem};
@@ -9,7 +9,6 @@ use crate::evm::Evm;
 use crate::db::{Database, DatabaseCommit, DatabaseRef, WrapDatabaseRef};
 use crate::inspector::GetInspector;
 use crate::inspector_handle_register;
-use crate::handler::register::HandleRegister;
 use std::sync::Arc;
 use rayon::ThreadPool;
 use rayon::prelude::*;
@@ -64,25 +63,6 @@ impl Occda {
         vec
     }
 
-    // Build an EVM instance with the given configuration
-    #[inline]
-    fn build_evm<'a, DB: Database + DatabaseRef, I>(
-        &self,
-        db: &'a DB,
-        inspector: I,
-        spec_id: SpecId,
-        e: &Box<Env>,
-        register_handles_fn: HandleRegister<I, WrapDatabaseRef<&'a DB>>,
-    ) -> Evm<'a, I, WrapDatabaseRef<&'a DB>> {
-        Evm::builder()
-            .with_ref_db(db)
-            .modify_env(|env| env.clone_from(e))
-            .with_external_context(inspector)
-            .with_spec_id(spec_id)
-            .append_handler_register(register_handles_fn)
-            .build()
-    }
-
     // Main execution function that processes transactions in parallel
     // Returns a vector of task results or an error
     pub fn main_with_db<'a, DB, I>(
@@ -99,10 +79,14 @@ impl Occda {
         let tx_size = h_tx.len();
         let mut exec_size = 0;
         let mut h_ready: Vec<usize> = Vec::new();          // Tasks ready for execution
-        let mut h_exec: BinaryHeap<Reverse<usize>> = BinaryHeap::new(); // Tasks executing
+        let mut h_exec: BinaryHeap<Reverse<(usize, usize)>> = BinaryHeap::new(); // Tasks executing
         let mut h_commit: BinaryHeap<Reverse<usize>> = BinaryHeap::new(); // Tasks ready for commit
         let len = h_tx.len();
         let mut next = 0;
+
+        for i in 0..len {
+            h_exec.push(Reverse((h_tx[i].sid as usize, h_tx[i].tid as usize)));
+        }
 
         // Create access tracker for conflict detection
         let mut access_tracker = AccessTracker::new();
@@ -116,11 +100,11 @@ impl Occda {
         // Main processing loop
         while next < len {
             // Find tasks ready for execution based on sequence ID
-            while let Some(Reverse(task_idx)) = h_exec.pop() {
-                if h_tx[task_idx].sid <= (next as i32 - 1) {
-                    h_ready.push(task_idx);
+            while let Some(Reverse((sid, tid))) = h_exec.pop() {
+                if h_tx[tid as usize].sid <= (next as i32 - 1) {
+                    h_ready.push(tid as usize);
                 } else {
-                    h_exec.push(Reverse(task_idx));
+                    h_exec.push(Reverse((sid, tid)));
                     break;
                 }
             }
@@ -133,21 +117,28 @@ impl Occda {
             let ready_tasks = std::mem::take(&mut h_ready);
             
             if ready_tasks.len() == 1 {
-                let task = &h_tx[ready_tasks[0]];
+                let idx = ready_tasks[0];
+                let task = &h_tx[idx];
                 let db_ref = db_shared.read();
                 let inspector = task.inspector.clone().unwrap();
-                let mut evm = self.build_evm(
-                    &*db_ref,
-                    inspector,
-                    task.spec_id,
-                    &task.env,
-                    inspector_handle_register,
-                );
+                let mut evm = Evm::builder()
+                                .with_ref_db(&*db_ref)
+                                .modify_env(|env| env.clone_from(&task.env))
+                                .with_external_context(inspector)
+                                .with_spec_id(task.spec_id)
+                                .append_handler_register(inspector_handle_register)
+                                .build();
+                let result = evm.transact();
+                
                 let mut task_result = TaskResultItem::default();    
                 task_result.inspector = Some(evm.context.external.clone());
                 task_result.gas = task.gas;
+
+                let mut read_write_set = evm.get_read_write_set();
+                read_write_set.add_write(task.env.tx.caller, AccessType::AccountInfo);
+                task_result.read_write_set = Some(read_write_set);
                 
-                let result = evm.transact();
+                
                 match result {
                     Ok(result_and_state) => {
                         let ResultAndState { state, result } = result_and_state;
@@ -155,15 +146,14 @@ impl Occda {
                         task_result.result = Some(result);
                     }
                     Err(_) => {
+                        task_result.state = None;
                         task_result.gas = 0;
                     }
                 }
-
-                result_store[task.tid as usize] = task_result;
-                h_commit.push(Reverse(ready_tasks[0]));
+                
+                result_store[idx] = task_result;
+                
             } else {
-                h_commit.extend(ready_tasks.iter().map(|&idx| Reverse(idx)));
-
                 let chunk_size = ready_tasks.len() / self.num_threads + (ready_tasks.len() % self.num_threads > 0) as usize;
                 // Execute tasks in parallel using thread pool
                 THREAD_POOL.get().unwrap().install(|| {
@@ -191,8 +181,6 @@ impl Occda {
                                 let mut task_result = TaskResultItem::default();
                                 task_result.inspector = Some(evm.context.external.clone());
                                 task_result.gas = task.gas;
-
-                                
 
                                 // Track read-write access
                                 let mut read_write_set = evm.get_read_write_set();
@@ -222,6 +210,8 @@ impl Occda {
                 });
 
             }
+
+            h_commit.extend(ready_tasks.iter().map(|&idx| Reverse(idx)));
 
             // Begin commit phase
             // let start = std::time::Instant::now();
@@ -254,7 +244,7 @@ impl Occda {
                     // Conflict detected: update sid and retry
                     h_tx[task_idx].sid = h_tx[task_idx].tid - 1;
                     // h_tx.push(value);
-                    h_exec.push(Reverse(task_idx));
+                    h_exec.push(Reverse((h_tx[task_idx].sid as usize, h_tx[task_idx].tid as usize)));
                 } else {
                     // No conflict: commit changes and update access tracker
                     if let Some(state) = task_result.state.take() {
