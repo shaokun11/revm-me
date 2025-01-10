@@ -15,7 +15,6 @@ use rayon::prelude::*;
 use parking_lot::RwLock;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
-use once_cell::sync::OnceCell;
 use std::time::Duration;
 
 // Main struct for handling parallel execution of EVM transactions
