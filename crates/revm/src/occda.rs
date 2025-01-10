@@ -170,19 +170,20 @@ impl Occda {
                 let parallel_start = std::time::Instant::now();
                 let chunk_size = ready_tasks.len() / self.num_threads + (ready_tasks.len() % self.num_threads > 0) as usize;
                 // Execute tasks in parallel using thread pool
+                println!("chunk_size: {} {}", chunk_size, ready_tasks.len());
                 THREAD_POOL.get().unwrap().install(|| {
                     ready_tasks
                         .par_chunks(chunk_size)
                         .for_each(|indexes| {
 
-                            let db_ref = db_shared.read();
+                            let db_ref = &*db_shared.read();
                             // Setup and execute individual task
                             for idx in indexes {
                                 let task = &h_tx[*idx];
                                 
                                 let inspector = task.inspector.clone().unwrap();
                                 let mut evm = Evm::builder()
-                                .with_ref_db(&*db_ref)
+                                .with_ref_db(db_ref)
                                 .modify_env(|env| env.clone_from(&task.env))
                                 .with_external_context(inspector)
                                 .with_spec_id(task.spec_id)
@@ -193,7 +194,7 @@ impl Occda {
 
                                 // Process execution results
                                 let mut task_result = TaskResultItem::default();
-                                task_result.inspector = Some(evm.context.external.clone());
+                                // task_result.inspector = Some(evm.context.external.clone());
                                 task_result.gas = task.gas;
 
                                 // Track read-write access
