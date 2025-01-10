@@ -169,9 +169,11 @@ impl Occda {
             } else {
                 let parallel_start = std::time::Instant::now();
                 let chunk_size = ready_tasks.len() / self.num_threads + (ready_tasks.len() % self.num_threads > 0) as usize;
-                // Execute tasks in parallel using thread pool
                 println!("chunk_size: {} {}", chunk_size, ready_tasks.len());
-                let thread_times: Arc<parking_lot::RwLock<Vec<(Duration, Duration)>>> = Arc::new(parking_lot::RwLock::new(vec![(Duration::from_secs(0), Duration::from_secs(0)); self.num_threads]));
+                let thread_times: Arc<parking_lot::RwLock<Vec<(Duration, Duration, Duration, Duration)>>> = 
+                    Arc::new(parking_lot::RwLock::new(vec![(Duration::from_secs(0), Duration::from_secs(0), 
+                    Duration::from_secs(0), Duration::from_secs(0)); self.num_threads]));
+
                 THREAD_POOL.get().unwrap().install(|| {
                     ready_tasks
                         .par_chunks(chunk_size)
@@ -182,21 +184,31 @@ impl Occda {
                             let db_read_end = std::time::Instant::now();
                             let db_read_time = db_read_end - db_read_start;
                             
-                            let exec_start = std::time::Instant::now();
+                            let mut init_time = Duration::from_secs(0);
+                            let mut transact_time = Duration::from_secs(0);
+                            let mut write_result_time = Duration::from_secs(0);
+
                             for idx in indexes {
                                 let task = &h_tx[*idx];
                                 
+                                let init_start = std::time::Instant::now();
                                 let inspector = task.inspector.clone().unwrap();
                                 let mut evm = Evm::builder()
-                                .with_ref_db(db_ref)
-                                .modify_env(|env| env.clone_from(&task.env))
-                                .with_external_context(inspector)
-                                .with_spec_id(task.spec_id)
-                                .append_handler_register(inspector_handle_register)
-                                .build();
+                                    .with_ref_db(db_ref)
+                                    .modify_env(|env| env.clone_from(&task.env))
+                                    .with_external_context(inspector)
+                                    .with_spec_id(task.spec_id)
+                                    .append_handler_register(inspector_handle_register)
+                                    .build();
+                                let init_end = std::time::Instant::now();
+                                init_time += init_end - init_start;
 
+                                let transact_start = std::time::Instant::now();
                                 let result = evm.transact();
+                                let transact_end = std::time::Instant::now();
+                                transact_time += transact_end - transact_start;
 
+                                let write_start = std::time::Instant::now();
                                 // Process execution results
                                 let mut task_result = TaskResultItem::default();
                                 task_result.inspector = Some(evm.context.external.clone());
@@ -224,18 +236,19 @@ impl Occda {
                                 unsafe {
                                     *result_raw_ptr.add(*idx) = task_result;
                                 }
+                                let write_end = std::time::Instant::now();
+                                write_result_time += write_end - write_start;
                             }
-                            let exec_end = std::time::Instant::now();
-                            let exec_time = exec_end - exec_start;
-                            thread_times.write()[thread_id] = (db_read_time, exec_time);
+                            thread_times.write()[thread_id] = (db_read_time, init_time, transact_time, write_result_time);
                         });
                 });
                 let parallel_end = std::time::Instant::now();
                 parallel_time += parallel_end - parallel_start;
                 // 打印每个线程的执行时间
                 println!("Thread execution times:");
-                for (i, (db_time, exec_time)) in thread_times.read().iter().enumerate() {
-                    println!("Thread {}: db_read={:?}, execution={:?}", i, db_time, exec_time);
+                for (i, (db_time, init_time, transact_time, write_time)) in thread_times.read().iter().enumerate() {
+                    println!("Thread {}: db_read={:?}, init={:?}, transact={:?}, write={:?}", 
+                        i, db_time, init_time, transact_time, write_time);
                 }
             }
 
