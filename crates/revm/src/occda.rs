@@ -171,15 +171,18 @@ impl Occda {
                 let chunk_size = ready_tasks.len() / self.num_threads + (ready_tasks.len() % self.num_threads > 0) as usize;
                 // Execute tasks in parallel using thread pool
                 println!("chunk_size: {} {}", chunk_size, ready_tasks.len());
-                let thread_times: Arc<parking_lot::RwLock<Vec<Duration>>> = Arc::new(parking_lot::RwLock::new(vec![Duration::from_secs(0); self.num_threads]));
+                let thread_times: Arc<parking_lot::RwLock<Vec<(Duration, Duration)>>> = Arc::new(parking_lot::RwLock::new(vec![(Duration::from_secs(0), Duration::from_secs(0)); self.num_threads]));
                 THREAD_POOL.get().unwrap().install(|| {
                     ready_tasks
                         .par_chunks(chunk_size)
                         .enumerate()
                         .for_each(|(thread_id, indexes)| {
-                            let thread_start = std::time::Instant::now();
+                            let db_read_start = std::time::Instant::now();
                             let db_ref = &*db_shared.read();
-                            // Setup and execute individual task
+                            let db_read_end = std::time::Instant::now();
+                            let db_read_time = db_read_end - db_read_start;
+                            
+                            let exec_start = std::time::Instant::now();
                             for idx in indexes {
                                 let task = &h_tx[*idx];
                                 
@@ -222,16 +225,17 @@ impl Occda {
                                     *result_raw_ptr.add(*idx) = task_result;
                                 }
                             }
-                            let thread_end = std::time::Instant::now();
-                            thread_times.write()[thread_id] += thread_end - thread_start;
+                            let exec_end = std::time::Instant::now();
+                            let exec_time = exec_end - exec_start;
+                            thread_times.write()[thread_id] = (db_read_time, exec_time);
                         });
                 });
                 let parallel_end = std::time::Instant::now();
                 parallel_time += parallel_end - parallel_start;
                 // 打印每个线程的执行时间
                 println!("Thread execution times:");
-                for (i, time) in thread_times.read().iter().enumerate() {
-                    println!("Thread {}: {:?}", i, time);
+                for (i, (db_time, exec_time)) in thread_times.read().iter().enumerate() {
+                    println!("Thread {}: db_read={:?}, execution={:?}", i, db_time, exec_time);
                 }
             }
 
