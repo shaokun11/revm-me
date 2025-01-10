@@ -22,24 +22,22 @@ use std::time::Duration;
 pub struct Occda {
     _dag: TaskDag,           // Dependency graph for tasks
     num_threads: usize,
+    thread_pool: ThreadPool,
 }
 
-// Global thread pool
-static THREAD_POOL: OnceCell<ThreadPool> = OnceCell::new();
 
 impl Occda {
     // Create a new OCCDA instance with specified number of threads
     pub fn new(num_threads: usize) -> Self {
-        THREAD_POOL.get_or_init(|| {
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(num_threads)
-                .build()
-                .unwrap()
-        });
+        let thread_pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build()
+            .unwrap();
 
         Occda {
             _dag: TaskDag::new(),
             num_threads,
+            thread_pool,
         }
     }
 
@@ -168,15 +166,38 @@ impl Occda {
                 
             } else {
                 let parallel_start = std::time::Instant::now();
-                let chunk_size = ready_tasks.len() / self.num_threads + (ready_tasks.len() % self.num_threads > 0) as usize;
-                println!("chunk_size: {} {}", chunk_size, ready_tasks.len());
+                let total_gas: u64 = ready_tasks.iter().map(|&idx| h_tx[idx].gas).sum();
+                let target_gas_per_thread = total_gas / self.num_threads as u64;
+                
+                let mut chunks: Vec<Vec<usize>> = vec![Vec::new(); self.num_threads];
+                let mut current_thread = 0;
+                let mut current_gas = 0u64;
+                
+                let mut sorted_tasks: Vec<_> = ready_tasks.iter().map(|&idx| (idx, h_tx[idx].gas)).collect();
+                sorted_tasks.sort_by_key(|&(_, gas)| std::cmp::Reverse(gas));
+                
+                for (idx, gas) in sorted_tasks {
+                    if current_gas >= target_gas_per_thread && current_thread < self.num_threads - 1 {
+                        current_thread += 1;
+                        current_gas = 0;
+                    }
+                    chunks[current_thread].push(idx);
+                    current_gas += gas;
+                }
+                
+                println!("Gas distribution:");
+                for (i, chunk) in chunks.iter().enumerate() {
+                    let chunk_gas: u64 = chunk.iter().map(|&idx| h_tx[idx].gas).sum();
+                    println!("Thread {}: tasks={}, total_gas={}", i, chunk.len(), chunk_gas);
+                }
+
                 let thread_times: Arc<parking_lot::RwLock<Vec<(Duration, Duration, Duration, Duration)>>> = 
                     Arc::new(parking_lot::RwLock::new(vec![(Duration::from_secs(0), Duration::from_secs(0), 
                     Duration::from_secs(0), Duration::from_secs(0)); self.num_threads]));
 
-                THREAD_POOL.get().unwrap().install(|| {
-                    ready_tasks
-                        .par_chunks(chunk_size)
+                self.thread_pool.install(|| {
+                    chunks
+                        .into_par_iter()
                         .enumerate()
                         .for_each(|(thread_id, indexes)| {
                             let db_read_start = std::time::Instant::now();
@@ -192,7 +213,7 @@ impl Occda {
                             println!("task_size: {:?} thread_id: {}", indexes.len(), thread_id);
 
                             for idx in indexes {
-                                let task = &h_tx[*idx];
+                                let task = &h_tx[idx];
                                 
                                 let init_start = std::time::Instant::now();
                                 let inspector = task.inspector.clone().unwrap();
@@ -239,13 +260,13 @@ impl Occda {
 
                                 let result_raw_ptr = result_ptr as *mut TaskResultItem<I>;
                                 unsafe {
-                                    *result_raw_ptr.add(*idx) = task_result;
+                                    *result_raw_ptr.add(idx) = task_result;
                                 }
                                 let write_end = std::time::Instant::now();
                                 write_result_time += write_end - write_start;
                             }
                             thread_times.write()[thread_id] = (db_read_time, init_time, transact_time, write_result_time);
-                            // 打印每个任务的执行时间统计
+                            
                             if !transact_times.is_empty() {
                                 let avg = transact_times.iter().sum::<Duration>() / transact_times.len() as u32;
                                 let min = transact_times.iter().min().unwrap();
