@@ -171,6 +171,14 @@ impl Occda {
                 let mut chunks: Vec<Vec<usize>> = vec![Vec::new(); self.num_threads];
                 let mut current_thread = 0;
                 let mut current_gas = 0u64;
+
+                let db_ref = &*db_shared.read();
+                for idx in ready_tasks.iter() {
+                    let task = &h_tx[*idx];
+
+                    let _ = db_ref.basic_ref(task.env.tx.caller);
+                    let _ = db_ref.basic_ref(*task.env.tx.transact_to.to().unwrap());
+                }
                 
                 let mut sorted_tasks: Vec<_> = ready_tasks.iter().map(|&idx| (idx, h_tx[idx].gas)).collect();
                 sorted_tasks.sort_by_key(|&(_, gas)| std::cmp::Reverse(gas));
