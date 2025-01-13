@@ -18,7 +18,7 @@ impl<I> Task<I> {
         Self {
             tid,
             sid,
-            gas: 21000,
+            gas: env.tx.gas_limit,
             inspector,
             spec_id,
             env,
