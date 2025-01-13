@@ -165,23 +165,23 @@ impl Occda {
                 
             } else {
                 let parallel_start = std::time::Instant::now();
-                let total_gas: u64 = ready_tasks.iter().map(|&idx| h_tx[idx].gas).sum();
-                let target_gas_per_thread = total_gas / self.num_threads as u64;
                 
                 let mut chunks: Vec<Vec<usize>> = vec![Vec::new(); self.num_threads];
-                let mut current_thread = 0;
-                let mut current_gas = 0u64;
+                let mut thread_gas: Vec<u64> = vec![0; self.num_threads];
                 
                 let mut sorted_tasks: Vec<_> = ready_tasks.iter().map(|&idx| (idx, h_tx[idx].gas)).collect();
                 sorted_tasks.sort_by_key(|&(_, gas)| std::cmp::Reverse(gas));
                 
                 for (idx, gas) in sorted_tasks {
-                    if current_gas >= target_gas_per_thread && current_thread < self.num_threads - 1 {
-                        current_thread += 1;
-                        current_gas = 0;
-                    }
-                    chunks[current_thread].push(idx);
-                    current_gas += gas;
+                    let target_thread = thread_gas
+                        .iter()
+                        .enumerate()
+                        .min_by_key(|&(_, g)| g)
+                        .map(|(i, _)| i)
+                        .unwrap();
+                    
+                    chunks[target_thread].push(idx);
+                    thread_gas[target_thread] += gas;
                 }
                 
                 println!("Gas distribution:");
