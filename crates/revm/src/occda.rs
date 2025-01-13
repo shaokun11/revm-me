@@ -73,12 +73,6 @@ impl Occda {
         DB: DatabaseRef + Database + DatabaseCommit + Send + Sync,
         I: Send + Sync + Clone + 'static + for<'db> GetInspector<WrapDatabaseRef<&'db DB>>,
     {
-
-        let mut perpare_time = Duration::from_secs(0);
-        let mut commit_time = Duration::from_secs(0);
-        let mut parallel_time = Duration::from_secs(0);
-        let mut seq_time = Duration::from_secs(0);
-
         // Initialize tracking variables
         let tx_size = h_tx.len();
         let mut exec_size = 0;
@@ -88,6 +82,13 @@ impl Occda {
         let len = h_tx.len();
         let mut next = 0;
 
+        let mut perpare_time = Duration::from_secs(0);
+        let mut commit_time = Duration::from_secs(0);
+        let mut parallel_time = Duration::from_secs(0);
+        let mut seq_time = Duration::from_secs(0);
+
+        
+
         for i in 0..len {
             h_exec.push(Reverse((h_tx[i].sid as usize, h_tx[i].tid as usize)));
         }
@@ -96,7 +97,6 @@ impl Occda {
         let mut access_tracker = AccessTracker::new();
         
         // Initialize result and state storage
-
         let db_shared = db.clone();
 
         let result_ptr = result_store.as_mut_ptr() as usize;
@@ -171,14 +171,6 @@ impl Occda {
                 let mut chunks: Vec<Vec<usize>> = vec![Vec::new(); self.num_threads];
                 let mut current_thread = 0;
                 let mut current_gas = 0u64;
-
-                let db_ref = &*db_shared.read();
-                for idx in ready_tasks.iter() {
-                    let task = &h_tx[*idx];
-
-                    let _ = db_ref.basic_ref(task.env.tx.caller);
-                    let _ = db_ref.basic_ref(*task.env.tx.transact_to.to().unwrap());
-                }
                 
                 let mut sorted_tasks: Vec<_> = ready_tasks.iter().map(|&idx| (idx, h_tx[idx].gas)).collect();
                 sorted_tasks.sort_by_key(|&(_, gas)| std::cmp::Reverse(gas));
@@ -285,7 +277,7 @@ impl Occda {
                 });
                 let parallel_end = std::time::Instant::now();
                 parallel_time += parallel_end - parallel_start;
-                // 打印每个线程的执行时间
+                
                 println!("Thread execution times:");
                 for (i, (db_time, init_time, transact_time, write_time)) in thread_times.read().iter().enumerate() {
                     println!("Thread {}: db_read={:?}, init={:?}, transact={:?}, write={:?}", 
